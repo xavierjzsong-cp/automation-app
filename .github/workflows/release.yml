@@ -1,0 +1,48 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version, for example v0.1.0"
+        required: true
+        type: string
+
+jobs:
+  checks:
+    name: Release checks
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      - name: Compile Python files
+        shell: pwsh
+        run: python -m compileall -q run_ui.py src
+
+      - name: Import core modules
+        shell: pwsh
+        run: python -c "from src.services.template_generation_service import TemplateGenerationService; print('ok')"
+
+      - name: Validate YAML config
+        shell: pwsh
+        run: |
+          python -c "import yaml; from pathlib import Path; partners=yaml.safe_load(Path('config/partners.yml').read_text(encoding='utf-8')); fields=yaml.safe_load(Path('config/field_mapping.yml').read_text(encoding='utf-8')); assert set(partners['partners']) == {'VAM', 'TSH', 'JFE', 'HT'}; assert {'od', 'wt', 'grade'} <= set(fields['fields']); print('yaml ok')"
+
+      - name: Print release placeholder
+        shell: pwsh
+        run: |
+          Write-Host "Release workflow ran for ${{ inputs.version }}."
+          Write-Host "Packaging and GitHub Release upload will be added after the build script and PyInstaller spec exist."
