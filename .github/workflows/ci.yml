@@ -33,7 +33,7 @@ jobs:
 
       - name: Import core modules
         shell: pwsh
-        run: python -c "from src.services.template_generation_service import TemplateGenerationService; print('ok')"
+        run: python -c "from src.services.template_generation_service import TemplateGenerationService; from src.utils.app_paths import resource_path, get_ui_settings_path; print(resource_path('config/partners.yml')); print(get_ui_settings_path()); print('ok')"
 
       - name: Validate YAML config
         shell: pwsh

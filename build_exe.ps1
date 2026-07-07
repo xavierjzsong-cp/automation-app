@@ -46,7 +46,7 @@ try {
     Invoke-Python @("-m", "compileall", "-q", "run_ui.py", "src")
 
     Write-Host "Checking core imports..."
-    Invoke-Python @("-c", "from src.services.template_generation_service import TemplateGenerationService; print('ok')")
+    Invoke-Python @("-c", "from src.services.template_generation_service import TemplateGenerationService; from src.utils.app_paths import resource_path, get_ui_settings_path; print(resource_path('config/partners.yml')); print(get_ui_settings_path()); print('ok')")
 
     Write-Host "Checking YAML configuration..."
     $yamlCheck = "import yaml; from pathlib import Path; partners=yaml.safe_load(Path('config/partners.yml').read_text(encoding='utf-8')); fields=yaml.safe_load(Path('config/field_mapping.yml').read_text(encoding='utf-8')); assert set(partners['partners']) == {'VAM', 'TSH', 'JFE', 'HT'}; assert {'od', 'wt', 'grade'} <= set(fields['fields']); print('yaml ok')"

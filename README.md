@@ -17,6 +17,7 @@ build_exe.ps1
 config/partners.yml
 config/field_mapping.yml
 src/services/template_generation_service.py
+src/utils/app_paths.py
 run_ui.py
 requirements.txt
 .gitignore
@@ -42,6 +43,9 @@ run_ui.py
 
 src/services/template_generation_service.py
     Minimal service class. Full workflow orchestration will be added later.
+
+src/utils/app_paths.py
+    Path helpers for source resources and per-user AppData files.
 
 config/partners.yml
     Minimal partner configuration for VAM, TSH, JFE, and HT.
@@ -92,7 +96,7 @@ Run the same core checks used by the current CI:
 
 ```powershell
 python -m compileall -q run_ui.py src
-python -c "from src.services.template_generation_service import TemplateGenerationService; print('ok')"
+python -c "from src.services.template_generation_service import TemplateGenerationService; from src.utils.app_paths import resource_path, get_ui_settings_path; print(resource_path('config/partners.yml')); print(get_ui_settings_path()); print('ok')"
 python -c "import yaml; from pathlib import Path; partners=yaml.safe_load(Path('config/partners.yml').read_text(encoding='utf-8')); fields=yaml.safe_load(Path('config/field_mapping.yml').read_text(encoding='utf-8')); assert set(partners['partners']) == {'VAM', 'TSH', 'JFE', 'HT'}; assert {'od', 'wt', 'grade'} <= set(fields['fields']); print('yaml ok')"
 ```
 
@@ -118,6 +122,28 @@ The workflow currently checks:
 Python compilation
 Core service import
 Minimal YAML configuration loading
+```
+
+## Runtime Paths
+
+Bundled or source-controlled resources are resolved with `resource_path()`, for example:
+
+```text
+config/partners.yml
+config/field_mapping.yml
+```
+
+Per-user runtime files belong under:
+
+```text
+%LOCALAPPDATA%\TemplateAutomationTool\
+```
+
+Planned user-specific files:
+
+```text
+%LOCALAPPDATA%\TemplateAutomationTool\config\ui_settings.json
+%LOCALAPPDATA%\TemplateAutomationTool\logs\
 ```
 
 ## Git Rules
