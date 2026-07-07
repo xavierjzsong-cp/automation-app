@@ -1,0 +1,41 @@
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Virtual environments
+.venv/
+venv/
+env/
+py314/
+
+# IDE / OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Build and packaging output
+build/
+dist/
+
+# Logs
+logs/
+
+# Local user inputs, templates, and generated outputs
+input_doc/
+input_docs/
+output_doc/
+output_docs/
+template/
+templates/
+
+# Local user configuration and secrets
+config/ui_settings.json
+.env
+
+# Excel temporary files
+~$*.xlsx
+
+# Local scratch scripts
+test.py
