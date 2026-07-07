@@ -4,7 +4,7 @@ Template Automation Tool is being rebuilt from zero as a Windows desktop automat
 
 The final goal is to let a user select a POTS PDF, an Excel template, a target sheet, and an output folder, then generate a completed Excel template by parsing the PDF, routing connection data to partner-specific automation, and writing the final result.
 
-This repository is currently in the early scaffold stage. The current code proves that the application entry point, service package, minimal configuration files, and CI checks are in place.
+This repository is currently in the early foundation stage. The current code proves that the application entry point, service package, minimal configuration files, CI checks, and local build-check script are in place.
 
 ## Current Status
 
@@ -12,6 +12,8 @@ Implemented so far:
 
 ```text
 .github/workflows/ci.yml
+.github/workflows/release.yml
+build_exe.ps1
 config/partners.yml
 config/field_mapping.yml
 src/services/template_generation_service.py
@@ -30,7 +32,6 @@ Partner mappers
 Playwright partner adapters
 Excel template writer
 PyInstaller packaging
-Release workflow
 ```
 
 ## Project Structure
@@ -50,6 +51,12 @@ config/field_mapping.yml
 
 .github/workflows/ci.yml
     Minimal GitHub Actions CI workflow.
+
+.github/workflows/release.yml
+    Manual release workflow. Packaging and upload will be added later.
+
+build_exe.ps1
+    Local build-check script. PyInstaller packaging will be added later.
 ```
 
 ## Development Setup
@@ -67,7 +74,7 @@ Install dependencies:
 python -m pip install -r requirements.txt
 ```
 
-## Run Current Scaffold
+## Run Current Baseline
 
 ```powershell
 python run_ui.py
@@ -76,7 +83,7 @@ python run_ui.py
 Current expected output:
 
 ```text
-Template Automation Tool scaffold is ready.
+Template Automation Tool baseline is ready.
 ```
 
 ## Local Checks
@@ -87,6 +94,12 @@ Run the same core checks used by the current CI:
 python -m compileall -q run_ui.py src
 python -c "from src.services.template_generation_service import TemplateGenerationService; print('ok')"
 python -c "import yaml; from pathlib import Path; partners=yaml.safe_load(Path('config/partners.yml').read_text(encoding='utf-8')); fields=yaml.safe_load(Path('config/field_mapping.yml').read_text(encoding='utf-8')); assert set(partners['partners']) == {'VAM', 'TSH', 'JFE', 'HT'}; assert {'od', 'wt', 'grade'} <= set(fields['fields']); print('yaml ok')"
+```
+
+Or run the local build-check script:
+
+```powershell
+.\build_exe.ps1 -SkipInstall
 ```
 
 ## CI
@@ -116,6 +129,7 @@ src/
 config/
 requirements.txt
 run_ui.py
+build_exe.ps1
 .github/workflows/
 README.md
 .gitignore

@@ -10,7 +10,7 @@ def main() -> None:
     entry point proves the application package can be imported and started.
     """
     TemplateGenerationService()
-    print("Template Automation Tool scaffold is ready.")
+    print("Template Automation Tool baseline is ready.")
 
 
 if __name__ == "__main__":
