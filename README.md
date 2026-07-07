@@ -1,204 +1,139 @@
 # Template Automation Tool
 
-A Windows desktop automation tool that reads a POTS PDF, determines the top and bottom connection partners, retrieves connection datasheet / blanking dimension data from partner websites, and writes the final result into a selected Excel template sheet.
+Template Automation Tool is being rebuilt from zero as a Windows desktop automation tool for internal use.
 
-中文说明: [README-CN.md](README-CN.md)
+The final goal is to let a user select a POTS PDF, an Excel template, a target sheet, and an output folder, then generate a completed Excel template by parsing the PDF, routing connection data to partner-specific automation, and writing the final result.
 
-## Audience
+This repository is currently in the early scaffold stage. The current code proves that the application entry point, service package, minimal configuration files, and CI checks are in place.
 
-- Internal end users: download the packaged release zip, extract it, and run the exe.
-- Developers / maintainers / release builders: clone the Git repository, modify, test, package, and publish new releases.
+## Current Status
 
-## How End Users Download the Latest Version
+Implemented so far:
 
-End users do not need Python or the source code.
+```text
+.github/workflows/ci.yml
+config/partners.yml
+config/field_mapping.yml
+src/services/template_generation_service.py
+run_ui.py
+requirements.txt
+.gitignore
+```
 
-1. Open the GitHub repository page.
-2. Go to **Releases**.
-3. Find the latest release.
-4. Download `TemplateAutomationTool.zip`.
-5. Extract the full zip file.
-6. Double-click `TemplateAutomationTool.exe`.
+Not implemented yet:
 
-Do not copy only the exe. The whole extracted folder must stay together because the exe depends on the bundled `_internal` folder, configuration files, Python runtime, and Playwright Chromium.
-
-## What Is a GitHub Release?
-
-A GitHub Release is a versioned download page for packaged deliverables. The Git repository should store source code and packaging configuration. It should not store large packaged exe zip files. After each version update, maintainers should:
-
-1. Build from the latest `main` branch.
-2. Generate `dist/TemplateAutomationTool.zip`.
-3. Create a new GitHub Release.
-4. Upload the zip as a release asset.
-5. Ask internal users to download the latest release.
+```text
+CustomTkinter UI
+POTS PDF parser
+Partner router
+Partner mappers
+Playwright partner adapters
+Excel template writer
+PyInstaller packaging
+Release workflow
+```
 
 ## Project Structure
 
 ```text
 run_ui.py
-    GUI entry point.
-
-src/ui/app.py
-    CustomTkinter desktop UI.
+    Minimal application entry point.
 
 src/services/template_generation_service.py
-    Main orchestration service connecting parser / router / mapper / adapter / writer.
+    Minimal service class. Full workflow orchestration will be added later.
 
-src/parsers/pots_doc_parser.py
-    POTS PDF parser.
+config/partners.yml
+    Minimal partner configuration for VAM, TSH, JFE, and HT.
 
-src/routers/partner_router.py
-    Routes top / bottom connections to partners.
+config/field_mapping.yml
+    Minimal field alias configuration for OD, WT, and grade.
 
-src/mappers/
-    Partner input mappers and coating mapper.
-
-src/adapters/
-    Playwright automation for VAM / TSH / JFE / HT websites.
-
-src/writers/template_writer.py
-    Excel template writer.
-
-config/partners.yaml
-    Partner URL and capability configuration. Bundled with the exe.
-
-TemplateAutomationTool.spec
-    PyInstaller onedir packaging configuration.
-
-packaging/pyinstaller_runtime_hook.py
-    PyInstaller runtime hook for bundled Playwright browsers.
+.github/workflows/ci.yml
+    Minimal GitHub Actions CI workflow.
 ```
-
-## User Data and Paths
-
-At runtime, the app creates user-specific data under:
-
-```text
-%LOCALAPPDATA%\TemplateAutomationTool\
-```
-
-Files include:
-
-```text
-%LOCALAPPDATA%\TemplateAutomationTool\config\ui_settings.json
-    Stores the user's recently selected PDF, template, output folder, etc.
-
-%LOCALAPPDATA%\TemplateAutomationTool\logs\
-    Stores adapter runtime logs.
-```
-
-These files should not be committed to Git and should not be bundled as fixed files in the exe package. Each user gets their own local files.
 
 ## Development Setup
+
+Create and activate a local virtual environment:
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+```
 
 Install dependencies:
 
 ```powershell
 python -m pip install -r requirements.txt
-python -m playwright install chromium
 ```
 
-If using the current project virtual environment:
-
-```powershell
-.\py314\Scripts\python.exe -m pip install -r requirements.txt
-.\py314\Scripts\python.exe -m playwright install chromium
-```
-
-## Run from Source
+## Run Current Scaffold
 
 ```powershell
 python run_ui.py
 ```
 
-Or:
-
-```powershell
-.\py314\Scripts\python.exe run_ui.py
-```
-
-## Package the Exe
-
-The current packaging strategy uses PyInstaller `onedir`. Do not start with `onefile`; Playwright + Chromium is more stable and easier to debug in onedir.
-
-Recommended one-command local build:
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\build_exe.ps1
-```
-
-Useful options:
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\build_exe.ps1 -SkipInstall
-powershell -NoProfile -ExecutionPolicy Bypass -File .\build_exe.ps1 -SkipInstall -SkipSmokeTest
-```
-
-The script installs/checks dependencies, validates the project, builds with PyInstaller, checks bundled files, runs a non-source startup smoke test, and creates `dist/TemplateAutomationTool.zip`.
-
-Manual build command:
-
-Build command:
-
-```powershell
-.\py314\Scripts\python.exe -m PyInstaller TemplateAutomationTool.spec --noconfirm --clean
-```
-
-Build output:
+Current expected output:
 
 ```text
-dist/TemplateAutomationTool/
+Template Automation Tool scaffold is ready.
 ```
 
-Create the user-facing zip:
+## Local Checks
+
+Run the same core checks used by the current CI:
 
 ```powershell
-Compress-Archive -LiteralPath dist\TemplateAutomationTool -DestinationPath dist\TemplateAutomationTool.zip -Force
+python -m compileall -q run_ui.py src
+python -c "from src.services.template_generation_service import TemplateGenerationService; print('ok')"
+python -c "import yaml; from pathlib import Path; partners=yaml.safe_load(Path('config/partners.yml').read_text(encoding='utf-8')); fields=yaml.safe_load(Path('config/field_mapping.yml').read_text(encoding='utf-8')); assert set(partners['partners']) == {'VAM', 'TSH', 'JFE', 'HT'}; assert {'od', 'wt', 'grade'} <= set(fields['fields']); print('yaml ok')"
 ```
 
-## What Is build_exe.ps1?
+## CI
 
-`build_exe.ps1` is the local one-click packaging script. It is not business logic. It collects the packaging commands in one PowerShell script, such as installing Playwright Chromium, running PyInstaller, checking the bundled files, running a startup smoke test, and creating the final zip.
-
-Use this script for normal local packaging. The manual commands above are kept for troubleshooting.
-
-## CI/CD
-
-This repository includes GitHub Actions workflows:
+GitHub Actions runs the minimal CI workflow on:
 
 ```text
-.github/workflows/ci.yml
-    CI checks for push, pull request, and manual runs.
-
-.github/workflows/release.yml
-    Manual CD workflow that builds the exe zip and uploads it to a GitHub Release.
+push to main
+pull request
+manual workflow_dispatch
 ```
 
-The CI workflow checks Python compilation, core imports, Playwright installation, and YAML configuration. It does not publish a release.
+The workflow currently checks:
 
-The Release workflow is manually triggered from GitHub Actions. Enter a version such as `v1.0.1`; it builds `dist/TemplateAutomationTool.zip` and uploads that zip as the release asset.
+```text
+Python compilation
+Core service import
+Minimal YAML configuration loading
+```
 
 ## Git Rules
 
-Commit:
+Commit source and configuration files:
 
 ```text
 src/
-config/partners.yaml
-config/field_mapping.yaml
+config/
 requirements.txt
-TemplateAutomationTool.spec
-packaging/
-build_exe.ps1
+run_ui.py
 .github/workflows/
 README.md
-README-CN.md
+.gitignore
 ```
 
-## Suggested Release Flow
+Do not commit local runtime files, virtual environments, logs, samples, generated outputs, or build artifacts:
 
-1. Make sure `main` is up to date.
-2. Run smoke tests or at least verify parser/router/service behavior.
-3. Run `.\build_exe.ps1` locally, or run the manual GitHub Actions Release workflow.
-4. Upload or confirm the generated `TemplateAutomationTool.zip` in GitHub Release.
-7. Ask internal users to download the latest release.
+```text
+.venv/
+py314/
+build/
+dist/
+logs/
+input_doc/
+input_docs/
+output_doc/
+output_docs/
+template/
+templates/
+config/ui_settings.json
+```
