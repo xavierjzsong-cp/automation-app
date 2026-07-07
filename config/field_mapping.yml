@@ -1,0 +1,14 @@
+fields:
+  od:
+    aliases:
+      - "OD"
+      - "Outside Diameter"
+
+  wt:
+    aliases:
+      - "WT"
+      - "Weight"
+
+  grade:
+    aliases:
+      - "Grade"

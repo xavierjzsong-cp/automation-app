@@ -1,0 +1,20 @@
+partners:
+  VAM:
+    display_name: "VAM"
+    enabled: true
+    adapter: "vam_adapter"
+
+  TSH:
+    display_name: "TSH (TenarisHydril)"
+    enabled: true
+    adapter: "tsh_adapter"
+
+  JFE:
+    display_name: "JFE"
+    enabled: true
+    adapter: "jfe_adapter"
+
+  HT:
+    display_name: "SLHT"
+    enabled: true
+    adapter: "ht_adapter"
