@@ -18,6 +18,7 @@ config/partners.yml
 config/field_mapping.yml
 src/services/template_generation_service.py
 src/utils/app_paths.py
+src/parsers/pots_doc_parser.py
 run_ui.py
 requirements.txt
 .gitignore
@@ -27,7 +28,6 @@ Not implemented yet:
 
 ```text
 CustomTkinter UI
-POTS PDF parser
 Partner router
 Partner mappers
 Playwright partner adapters
@@ -46,6 +46,9 @@ src/services/template_generation_service.py
 
 src/utils/app_paths.py
     Path helpers for source resources and per-user AppData files.
+
+src/parsers/pots_doc_parser.py
+    POTS text/PDF parser that returns structured fields for downstream steps.
 
 config/partners.yml
     Minimal partner configuration for VAM, TSH, JFE, and HT.
@@ -96,8 +99,9 @@ Run the same core checks used by the current CI:
 
 ```powershell
 python -m compileall -q run_ui.py src
-python -c "from src.services.template_generation_service import TemplateGenerationService; from src.utils.app_paths import resource_path, get_ui_settings_path; print(resource_path('config/partners.yml')); print(get_ui_settings_path()); print('ok')"
+python -c "from src.services.template_generation_service import TemplateGenerationService; from src.parsers.pots_doc_parser import PotsDocParser; from src.utils.app_paths import resource_path, get_ui_settings_path; print(resource_path('config/partners.yml')); print(get_ui_settings_path()); print('ok')"
 python -c "import yaml; from pathlib import Path; partners=yaml.safe_load(Path('config/partners.yml').read_text(encoding='utf-8')); fields=yaml.safe_load(Path('config/field_mapping.yml').read_text(encoding='utf-8')); assert set(partners['partners']) == {'VAM', 'TSH', 'JFE', 'HT'}; assert {'od', 'wt', 'grade'} <= set(fields['fields']); print('yaml ok')"
+python -c "from src.parsers.pots_doc_parser import PotsDocParser; text='POTS Document number: 123 Rev: A\nCP Part Number ABC-001\nProduct Description Pup Joint 13CR(80) 5.5 17# VAM TOP BOX X 5.5 17# TSH WEDGE PIN OAL 120\nANSI/NACE MR0175/ISO 15156 (Yes/No) Yes\nQCP (Standard/Client Specific) Standard\n'; parsed=PotsDocParser().parse_text(text); assert parsed.part_number == 'ABC-001'; assert parsed.rev == 'A'; assert parsed.product_material_grade == '13CR(80)'; assert parsed.connections['upper'].family == 'VAM'; assert parsed.connections['lower'].family == 'TSH'; print('parser ok')"
 ```
 
 Or run the local build-check script:
@@ -122,6 +126,7 @@ The workflow currently checks:
 Python compilation
 Core service import
 Minimal YAML configuration loading
+Parser behavior smoke check
 ```
 
 ## Runtime Paths
