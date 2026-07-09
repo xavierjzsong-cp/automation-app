@@ -46,7 +46,7 @@ try {
     Invoke-Python @("-m", "compileall", "-q", "run_ui.py", "src")
 
     Write-Host "Checking core imports..."
-    Invoke-Python @("-c", "from src.services.template_generation_service import GenerationRequest, GenerationResult, TemplateGenerationService; from src.parsers.pots_doc_parser import PotsDocParser; from src.routers.partner_router import PartnerRouter; from src.mappers.tsh_mapper import TshMapper; from src.mappers.vam_mapper import VamMapper; from src.writers.template_writer import TemplateWriter; from src.utils.app_paths import resource_path, get_ui_settings_path; print(resource_path('config/partners.yml')); print(get_ui_settings_path()); print('ok')")
+    Invoke-Python @("-c", "from src.services.template_generation_service import GenerationRequest, GenerationResult, TemplateGenerationService; from src.parsers.pots_doc_parser import PotsDocParser; from src.routers.partner_router import PartnerRouter; from src.mappers.tsh_mapper import TshMapper; from src.mappers.vam_mapper import VamMapper; from src.adapters.vam_adapter import VamAdapter; from src.writers.template_writer import TemplateWriter; from src.utils.app_paths import resource_path, get_ui_settings_path; print(resource_path('config/partners.yml')); print(get_ui_settings_path()); print('ok')")
 
     Write-Host "Checking YAML configuration..."
     $yamlCheck = "import yaml; from pathlib import Path; partners=yaml.safe_load(Path('config/partners.yml').read_text(encoding='utf-8')); fields=yaml.safe_load(Path('config/field_mapping.yml').read_text(encoding='utf-8')); assert set(partners['partners']) == {'VAM', 'TSH', 'JFE', 'HT'}; assert {'od', 'wt', 'grade'} <= set(fields['fields']); print('yaml ok')"
@@ -63,6 +63,55 @@ try {
     Write-Host "Checking VAM mapper behavior..."
     $vamMapperCheck = "from src.parsers.pots_doc_parser import PotsDocParser; from src.routers.partner_router import PartnerRouter; from src.mappers.vam_mapper import VamMapper; text='POTS Document number: 123 Rev: A\nCP Part Number ABC-001\nProduct Description Pup Joint 13CR(80) 5.5 17# VAM TOP BOX X 5.5 17# TSH WEDGE PIN OAL 120\nANSI/NACE MR0175/ISO 15156 (Yes/No) Yes\nQCP (Standard/Client Specific) Standard\n'; parsed=PotsDocParser().parse_text(text); routing=PartnerRouter().route(parsed); target=routing['targets'][0]; mapped=VamMapper().build_mapped_data(target=target, shared_data=routing['shared_data']); conn=mapped['connection']; assert mapped['partner'] == 'VAM'; assert mapped['side'] == 'upper'; assert mapped['drift_extraction'] is True; assert conn['name'] == 'TOP'; assert conn['od'] == '5-1/2'; assert conn['weight'] == '17.00'; assert conn['material_family'] == '13CR'; assert conn['yield_strength'] == '80'; assert conn['type'] == 'BOX'; print('vam mapper ok')"
     Invoke-Python @("-c", $vamMapperCheck)
+
+    Write-Host "Checking VAM adapter interface..."
+    $vamAdapterCheck = @'
+from pathlib import Path
+from tempfile import TemporaryDirectory
+
+from src.adapters.vam_adapter import VamAdapter
+
+mapped = {
+    'partner': 'VAM',
+    'side': 'upper',
+    'drift_extraction': True,
+    'connection': {
+        'name': 'TOP',
+        'od': '5-1/2',
+        'weight': '17.00',
+        'material_family': '13CR',
+        'yield_strength': '80',
+        'type': 'BOX',
+    },
+}
+
+tmp = TemporaryDirectory()
+adapter = VamAdapter(
+    base_url='https://www.vamservices.com',
+    configurator_url='https://www.vamservices.com/product/configurator',
+    logs_dir=Path(tmp.name),
+    headless=True,
+)
+try:
+    try:
+        adapter.run({'partner': 'VAM', 'side': 'upper', 'connection': {}})
+        raise AssertionError('Expected ValueError for incomplete VAM data.')
+    except ValueError:
+        pass
+
+    try:
+        adapter.run(mapped)
+        raise AssertionError('Expected NotImplementedError for VAM automation.')
+    except NotImplementedError:
+        pass
+finally:
+    adapter.close()
+    adapter.close()
+    tmp.cleanup()
+
+print('vam adapter ok')
+'@
+    Invoke-Python @("-c", $vamAdapterCheck)
 
     Write-Host "Checking TSH mapper behavior..."
     $tshMapperCheck = "from src.parsers.pots_doc_parser import PotsDocParser; from src.routers.partner_router import PartnerRouter; from src.mappers.tsh_mapper import TshMapper; text='POTS Document number: 123 Rev: A\nCP Part Number ABC-001\nProduct Description Pup Joint 13CR(80) 5.5 17# VAM TOP BOX X 5.5 17# TSH WEDGE PIN OAL 120\nANSI/NACE MR0175/ISO 15156 (Yes/No) Yes\nQCP (Standard/Client Specific) Standard\n'; parsed=PotsDocParser().parse_text(text); routing=PartnerRouter().route(parsed); target=routing['targets'][1]; mapped=TshMapper().build_mapped_data(target=target, shared_data=routing['shared_data']); conn=mapped['connection']; assert mapped['partner'] == 'TSH'; assert mapped['side'] == 'lower'; assert mapped['drift_extraction'] is True; assert conn['name'] == 'WEDGE'; assert conn['od'] == '5.500'; assert conn['weight'] == '17.00'; assert conn['material_family'] == '13CR'; assert conn['yield_strength'] == '80'; assert conn['type'] == 'PIN'; print('tsh mapper ok')"
