@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from src.parsers.pots_doc_parser import ParsedPotsDocument, PotsDocParser
+from src.routers.partner_router import PartnerRouter
 from src.writers.template_writer import TemplateWriter
 
 
@@ -52,9 +53,11 @@ class TemplateGenerationService:
     def __init__(
         self,
         parser: PotsDocParser | None = None,
+        router: PartnerRouter | None = None,
         writer: TemplateWriter | None = None,
     ) -> None:
         self.parser = parser or PotsDocParser()
+        self.router = router or PartnerRouter()
         self.writer = writer or TemplateWriter()
         self.is_ready = True
 
@@ -71,6 +74,9 @@ class TemplateGenerationService:
         parsed = self.parser.parse_pdf(request.input_path)
         parsed_data = self._parsed_to_dict(parsed)
 
+        self._status(status_callback, "Identifying connection details...")
+        routing_result = self.router.route(parsed_data)
+
         self._status(status_callback, "Filling Excel template...")
         writer_result = self.writer.write(
             parsed=parsed,
@@ -84,7 +90,7 @@ class TemplateGenerationService:
         return GenerationResult(
             parsed=parsed_data,
             writer_result=writer_result,
-            routing_result=None,
+            routing_result=routing_result,
             mapped_results=[],
             coating_data={},
             top_adapter=None,
