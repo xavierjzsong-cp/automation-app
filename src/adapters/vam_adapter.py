@@ -18,6 +18,16 @@ logger = logging.getLogger(__name__)
 class VamAdapter(BaseAdapter):
     """Validate VAM mapped data and own the VAM browser session."""
 
+    COOKIE_BUTTON_TEXTS = (
+        "Accept",
+        "Accept All",
+        "I Accept",
+        "Allow all",
+        "Got it",
+        "Agree",
+        "Continue",
+    )
+
     REQUIRED_CONNECTION_FIELDS = {
         "name",
         "od",
@@ -53,10 +63,12 @@ class VamAdapter(BaseAdapter):
         self._start_browser(playwright_factory)
 
     def run(self, mapped_data: dict[str, Any]) -> dict[str, Any]:
-        """Validate mapped data and fail explicitly until automation exists."""
+        """Validate mapped data and open the VAM configurator."""
         self._validate_mapped_data(mapped_data)
+        self.open_configurator()
+        self.handle_cookie_popup_if_any()
         raise NotImplementedError(
-            "VAM Playwright automation is not implemented yet."
+            "VAM filter selection is not implemented yet."
         )
 
     def close(self) -> None:
@@ -105,6 +117,42 @@ class VamAdapter(BaseAdapter):
             resource.close()
         except Exception:
             logger.debug("Failed to close VAM adapter %s.", name, exc_info=True)
+
+    def open_configurator(self) -> None:
+        """Open the VAM configurator and wait for the page shell to settle."""
+        page = self._require_page()
+        logger.info("Opening VAM configurator: %s", self.configurator_url)
+
+        try:
+            page.goto(self.configurator_url, wait_until="domcontentloaded")
+            page.wait_for_load_state("networkidle")
+        except Exception as exc:
+            raise RuntimeError(
+                f"Failed to open VAM configurator: {self.configurator_url}"
+            ) from exc
+
+    def handle_cookie_popup_if_any(self) -> bool:
+        """Dismiss a common cookie popup if one appears."""
+        page = self._require_page()
+
+        for text in self.COOKIE_BUTTON_TEXTS:
+            try:
+                button = page.get_by_role("button", name=text, exact=True).first
+                if button.is_visible(timeout=1200):
+                    button.click(force=True)
+                    page.wait_for_timeout(1000)
+                    logger.info("Accepted VAM cookie popup with button: %s", text)
+                    return True
+            except Exception:
+                continue
+
+        return False
+
+    def _require_page(self) -> Page:
+        if self.page is None:
+            raise RuntimeError("VAM adapter page is not available.")
+
+        return self.page
 
     def _validate_mapped_data(self, mapped_data: dict[str, Any]) -> None:
         partner = (mapped_data.get("partner") or "").upper()

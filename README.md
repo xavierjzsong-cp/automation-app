@@ -34,7 +34,7 @@ Not implemented yet:
 
 ```text
 CustomTkinter UI
-Real VAM page interaction and extraction
+Real VAM filter selection and extraction
 Other partner adapters
 PyInstaller packaging
 ```
@@ -67,7 +67,7 @@ src/adapters/base_adapter.py
     Shared interface for partner website adapters.
 
 src/adapters/vam_adapter.py
-    VAM adapter interface with mapped-data validation and Playwright browser lifecycle management.
+    VAM adapter interface with mapped-data validation, Playwright browser lifecycle management, and basic configurator navigation.
 
 src/writers/template_writer.py
     Excel writer that fills parser-derived fields into a selected sheet.
@@ -152,7 +152,7 @@ Minimal YAML configuration loading
 Parser behavior smoke check
 Router behavior smoke check
 VAM mapper behavior smoke check
-VAM adapter browser lifecycle smoke check
+VAM adapter navigation smoke check
 TSH mapper behavior smoke check
 Writer behavior smoke check
 Service flow smoke check
