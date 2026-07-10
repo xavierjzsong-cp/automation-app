@@ -71,6 +71,62 @@ from tempfile import TemporaryDirectory
 
 from src.adapters.vam_adapter import VamAdapter
 
+class FakePage:
+    def __init__(self):
+        self.timeout = None
+
+    def set_default_timeout(self, timeout):
+        self.timeout = timeout
+
+
+class FakeContext:
+    def __init__(self):
+        self.closed = False
+        self.page = FakePage()
+
+    def new_page(self):
+        return self.page
+
+    def close(self):
+        self.closed = True
+
+
+class FakeBrowser:
+    def __init__(self):
+        self.closed = False
+        self.context = FakeContext()
+
+    def new_context(self):
+        return self.context
+
+    def close(self):
+        self.closed = True
+
+
+class FakeChromium:
+    def __init__(self):
+        self.launch_args = None
+        self.browser = FakeBrowser()
+
+    def launch(self, headless, slow_mo):
+        self.launch_args = {'headless': headless, 'slow_mo': slow_mo}
+        return self.browser
+
+
+class FakePlaywright:
+    def __init__(self):
+        self.chromium = FakeChromium()
+        self.started = False
+        self.stopped = False
+
+    def start(self):
+        self.started = True
+        return self
+
+    def stop(self):
+        self.stopped = True
+
+
 mapped = {
     'partner': 'VAM',
     'side': 'upper',
@@ -86,13 +142,24 @@ mapped = {
 }
 
 tmp = TemporaryDirectory()
+fake_playwright = FakePlaywright()
 adapter = VamAdapter(
     base_url='https://www.vamservices.com',
     configurator_url='https://www.vamservices.com/product/configurator',
     logs_dir=Path(tmp.name),
     headless=True,
+    slow_mo=25,
+    timeout_ms=1234,
+    playwright_factory=lambda: fake_playwright,
 )
 try:
+    assert fake_playwright.started is True
+    assert fake_playwright.chromium.launch_args == {'headless': True, 'slow_mo': 25}
+    assert adapter.browser is fake_playwright.chromium.browser
+    assert adapter.context is fake_playwright.chromium.browser.context
+    assert adapter.page is fake_playwright.chromium.browser.context.page
+    assert adapter.page.timeout == 1234
+
     try:
         adapter.run({'partner': 'VAM', 'side': 'upper', 'connection': {}})
         raise AssertionError('Expected ValueError for incomplete VAM data.')
@@ -106,6 +173,9 @@ try:
         pass
 finally:
     adapter.close()
+    assert fake_playwright.chromium.browser.context.closed is True
+    assert fake_playwright.chromium.browser.closed is True
+    assert fake_playwright.stopped is True
     adapter.close()
     tmp.cleanup()
 
