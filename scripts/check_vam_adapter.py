@@ -112,6 +112,7 @@ class RecordingVamAdapter(VamAdapter):
         self.connection_calls: list[str] = []
         self.cds_pages: list[object] = []
         self.dropdown_calls: list[tuple[str, str]] = []
+        self.extraction_calls: list[tuple[object, dict[str, Any]]] = []
         self.grade_calls: list[tuple[str | None, str | None]] = []
         self.open_result_cds_calls: list[int] = []
         self.wait_for_cds_content_loaded_calls: list[object] = []
@@ -147,6 +148,24 @@ class RecordingVamAdapter(VamAdapter):
 
     def _wait_for_cds_content_loaded(self, cds_page: object) -> None:
         self.wait_for_cds_content_loaded_calls.append(cds_page)
+
+    def extract_required_data(
+        self,
+        cds_page: object,
+        mapped_data: dict[str, Any],
+    ) -> dict[str, Any]:
+        self.extraction_calls.append((cds_page, mapped_data))
+        return {
+            "tensile": "1000",
+            "compression": "900",
+            "burst": "800",
+            "collapse": "700",
+            "od": {"nominal": "5.500", "tol_1": "+0.010", "tol_2": "-0.010"},
+            "id": {"nominal": "4.892", "tol_1": "+0.010", "tol_2": "-0.010"},
+            "external_length": "7.250",
+            "internal_length": "6.125",
+            "drift": "4.767",
+        }
 
 
 def build_mapped_data() -> dict[str, Any]:
@@ -196,11 +215,18 @@ def main() -> None:
         except ValueError:
             pass
 
-        try:
-            adapter.run(mapped)
-            raise AssertionError("Expected NotImplementedError for VAM automation.")
-        except NotImplementedError as exc:
-            assert str(exc) == "VAM data extraction is not implemented yet."
+        result = adapter.run(mapped)
+        assert result == {
+            "tensile": "1000",
+            "compression": "900",
+            "burst": "800",
+            "collapse": "700",
+            "od": {"nominal": "5.500", "tol_1": "+0.010", "tol_2": "-0.010"},
+            "id": {"nominal": "4.892", "tol_1": "+0.010", "tol_2": "-0.010"},
+            "external_length": "7.250",
+            "internal_length": "6.125",
+            "drift": "4.767",
+        }
 
         assert adapter.page.goto_calls == [
             {
@@ -227,9 +253,36 @@ def main() -> None:
         assert adapter.wait_for_results_calls == 1
         assert adapter.open_result_cds_calls == [0]
         assert adapter.wait_for_cds_content_loaded_calls == adapter.cds_pages
+        assert adapter.extraction_calls == [(adapter.cds_pages[0], mapped)]
         assert adapter._grade_option_matches("API 13CR 80", "13CR", "80")
         assert adapter._grade_option_matches("13CR 80 ksi", "13CR", "80.0")
         assert not adapter._grade_option_matches("Carbon Steel 80", "13CR", "80")
+        assert adapter._extract_first_number("Value 1,234.500 psi") == "1,234.500"
+        assert adapter._lookup_value_by_contains(
+            {"Internal Pressure Resistance": "123"},
+            "Internal Pressure",
+        ) == "123"
+        assert adapter._is_joint_performance_label(
+            "Tension Strength, with Sealability"
+        )
+
+        blanking_text = (
+            "Header BOX BED 5.500 in. +0.010 in. / -0.010 in. "
+            "BID 4.892 in. +0.010 in. / -0.010 in. "
+            "MBEL min. 7.250 in. MBIL 6.125 in. "
+            "PIN PED 5.123 in. +0.001 in. / -0.001 in."
+        )
+        box_section = adapter._extract_section(
+            text=blanking_text,
+            start_label="BOX",
+            end_candidates=["PIN"],
+        )
+        assert adapter._extract_dimension_triplet(box_section, "BED") == {
+            "nominal": "5.500",
+            "tol_1": "+0.010",
+            "tol_2": "-0.010",
+        }
+        assert adapter._extract_min_length_value(box_section, "MBEL") == "7.250"
     finally:
         adapter.close()
         assert fake_playwright.chromium.browser.context.closed is True

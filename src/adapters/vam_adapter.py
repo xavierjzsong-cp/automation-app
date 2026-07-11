@@ -22,6 +22,7 @@ class VamAdapter(BaseAdapter):
     DEFAULT_DRIFT_OPTION = "API Drift"
     DEFAULT_MATERIAL_FAMILY = "Carbon Steel"
     DEFAULT_PIPE_SPECIFICATION = "API"
+    NA = "NA"
 
     DROPDOWN_INDEX_MAP = {
         "OD (in)": 0,
@@ -108,8 +109,9 @@ class VamAdapter(BaseAdapter):
         cds_page = self.open_result_cds(result_index)
         self._wait_for_cds_content_loaded(cds_page)
 
-        raise NotImplementedError(
-            "VAM data extraction is not implemented yet."
+        return self.extract_required_data(
+            cds_page=cds_page,
+            mapped_data=mapped_data,
         )
 
     def close(self) -> None:
@@ -480,6 +482,79 @@ class VamAdapter(BaseAdapter):
             log_label="cds_page_values",
         )
 
+    def _wait_for_blanking_content_loaded(
+        self,
+        cds_page: Page,
+        connection_type: str,
+    ) -> None:
+        self._wait_for_loader_to_disappear(cds_page, timeout=15000)
+
+        if connection_type == "BOX":
+            patterns = [
+                r"\bBOX\b",
+                r"\bBED\b",
+                r"\bBID\b",
+                r"\bMBEL\b",
+                r"\bMBIL\b",
+                r"\bin\.\b",
+            ]
+            label = "blanking_box"
+        elif connection_type == "PIN":
+            patterns = [
+                r"\bPIN\b",
+                r"\bPED\b",
+                r"\bPID\b",
+                r"\bMPEL\b",
+                r"\bMPIL\b",
+                r"\bin\.\b",
+            ]
+            label = "blanking_pin"
+        else:
+            raise RuntimeError(
+                f"Unsupported connection type for blanking wait: {connection_type}"
+            )
+
+        self._poll_page_text_until_ready(
+            page=cds_page,
+            ready_patterns=patterns,
+            timeout_ms=20000,
+            interval_ms=1000,
+            log_label=label,
+        )
+
+    def extract_required_data(
+        self,
+        cds_page: Page,
+        mapped_data: dict[str, Any],
+    ) -> dict[str, Any]:
+        connection = mapped_data.get("connection") or {}
+        connection_type = (connection.get("type") or "").upper()
+        drift_extraction = bool(mapped_data.get("drift_extraction"))
+
+        drift_size: dict[str, Any] = {
+            "drift": self.NA,
+        }
+        if drift_extraction:
+            drift_size = {
+                "drift": self._extract_drift_size(cds_page),
+            }
+
+        joint_performances = self._extract_joint_performances(cds_page)
+
+        self._open_blanking_dimensions_tab(cds_page)
+        self._wait_for_blanking_content_loaded(cds_page, connection_type)
+
+        blanking_dimensions = self._extract_blanking_dimensions(
+            cds_page=cds_page,
+            connection_type=connection_type,
+        )
+
+        return {
+            **joint_performances,
+            **blanking_dimensions,
+            **drift_size,
+        }
+
     def _require_page(self) -> Page:
         if self.page is None:
             raise RuntimeError("VAM adapter page is not available.")
@@ -849,6 +924,301 @@ class VamAdapter(BaseAdapter):
         text = text.replace("\u00a0", " ")
         text = re.sub(r"\s+", " ", text)
         return text.strip()
+
+    def _extract_joint_performances(
+        self,
+        cds_page: Page,
+    ) -> dict[str, str | None]:
+        pairs: dict[str, str] = {}
+
+        rows = cds_page.locator("[data-cy^='cds-card-data']")
+        try:
+            row_count = rows.count()
+        except Exception:
+            row_count = 0
+
+        for index in range(row_count):
+            try:
+                row = rows.nth(index)
+
+                label_locator = row.locator("[data-cy^='cds-card-label']").first
+                value_cast_locator = row.locator(
+                    "[data-cy^='cds-card-value-cast']"
+                ).first
+                unit_locator = row.locator("[data-cy^='cds-card-unit']").first
+
+                if label_locator.count() == 0 or value_cast_locator.count() == 0:
+                    continue
+
+                label = label_locator.inner_text(timeout=2000).strip()
+                value = value_cast_locator.inner_text(timeout=2000).strip()
+
+                unit = ""
+                try:
+                    if unit_locator.count() > 0:
+                        unit = unit_locator.inner_text(timeout=1000).strip()
+                except Exception:
+                    unit = ""
+
+                if not label or not value:
+                    continue
+
+                normalized_label = self._normalize_text_for_parsing(label)
+                normalized_value = self._normalize_text_for_parsing(
+                    f"{value} {unit}".strip()
+                )
+
+                if self._is_joint_performance_label(normalized_label):
+                    value_number = self._extract_first_number(normalized_value)
+                    if value_number is not None:
+                        pairs[normalized_label] = value_number
+            except Exception:
+                continue
+
+        return {
+            "tensile": self._lookup_value_by_contains(
+                pairs,
+                "Tension Strength, with Sealability",
+            ),
+            "compression": self._lookup_value_by_contains(
+                pairs,
+                "Compression Strength, with Sealability",
+            ),
+            "burst": self._lookup_value_by_contains(
+                pairs,
+                "Internal Pressure Resistance",
+            ),
+            "collapse": self._lookup_value_by_contains(
+                pairs,
+                "External Pressure Resistance",
+            ),
+        }
+
+    def _extract_drift_size(self, cds_page: Page) -> str | None:
+        rows = cds_page.locator("[data-cy^='cds-card-data']")
+
+        try:
+            row_count = rows.count()
+        except Exception:
+            row_count = 0
+
+        for index in range(row_count):
+            try:
+                row = rows.nth(index)
+
+                label_locator = row.locator("[data-cy^='cds-card-label']").first
+                value_cast_locator = row.locator(
+                    "[data-cy^='cds-card-value-cast']"
+                ).first
+                unit_locator = row.locator("[data-cy^='cds-card-unit']").first
+
+                if label_locator.count() == 0 or value_cast_locator.count() == 0:
+                    continue
+
+                label = label_locator.inner_text(timeout=2000).strip()
+                value = value_cast_locator.inner_text(timeout=2000).strip()
+
+                unit = ""
+                try:
+                    if unit_locator.count() > 0:
+                        unit = unit_locator.inner_text(timeout=1000).strip()
+                except Exception:
+                    unit = ""
+
+                if not label or not value:
+                    continue
+
+                normalized_label = self._normalize_text_for_parsing(label).lower()
+                normalized_value = self._normalize_text_for_parsing(
+                    f"{value} {unit}".strip()
+                )
+
+                if normalized_label == "drift":
+                    return self._extract_first_number(normalized_value)
+            except Exception:
+                continue
+
+        raise RuntimeError("Could not extract VAM Drift from Pipe Body Properties.")
+
+    def _open_blanking_dimensions_tab(self, cds_page: Page) -> None:
+        tab_candidates = [
+            cds_page.get_by_role("tab", name="Blanking Dimensions"),
+            cds_page.locator("[role='tab']").filter(
+                has_text="Blanking Dimensions"
+            ).first,
+            cds_page.get_by_text("Blanking Dimensions", exact=False).first,
+        ]
+
+        for tab in tab_candidates:
+            try:
+                if tab.is_visible(timeout=3000):
+                    tab.click(force=True)
+                    cds_page.wait_for_timeout(500)
+                    return
+            except Exception:
+                continue
+
+        raise RuntimeError("Could not open Blanking Dimensions tab.")
+
+    def _extract_blanking_dimensions(
+        self,
+        cds_page: Page,
+        connection_type: str,
+    ) -> dict[str, Any]:
+        body_text = cds_page.locator("body").inner_text(timeout=5000)
+        normalized = self._normalize_text_for_parsing(body_text)
+
+        if connection_type == "BOX":
+            section_text = self._extract_section(
+                text=normalized,
+                start_label="BOX",
+                end_candidates=[
+                    "PIN",
+                    "The availability of blanking dimensions",
+                ],
+            )
+            return {
+                "od": self._extract_dimension_triplet(section_text, "BED"),
+                "id": self._extract_dimension_triplet(section_text, "BID"),
+                "external_length": self._extract_min_length_value(
+                    section_text,
+                    "MBEL",
+                ),
+                "internal_length": self._extract_min_length_value(
+                    section_text,
+                    "MBIL",
+                ),
+            }
+
+        if connection_type == "PIN":
+            section_text = self._extract_section(
+                text=normalized,
+                start_label="PIN",
+                end_candidates=[
+                    "The availability of blanking dimensions",
+                    "WARNING",
+                ],
+            )
+            return {
+                "od": self._extract_dimension_triplet(section_text, "PED"),
+                "id": self._extract_dimension_triplet(section_text, "PID"),
+                "external_length": self._extract_min_length_value(
+                    section_text,
+                    "MPEL",
+                ),
+                "internal_length": self._extract_min_length_value(
+                    section_text,
+                    "MPIL",
+                ),
+            }
+
+        raise RuntimeError(
+            f"Unsupported connection type for blanking extraction: {connection_type}"
+        )
+
+    def _extract_section(
+        self,
+        text: str,
+        start_label: str,
+        end_candidates: list[str],
+    ) -> str:
+        start_index = text.find(start_label)
+        if start_index == -1:
+            return text
+
+        end_index = len(text)
+        for candidate in end_candidates:
+            candidate_index = text.find(candidate, start_index + len(start_label))
+            if candidate_index != -1 and candidate_index < end_index:
+                end_index = candidate_index
+
+        return text[start_index:end_index].strip()
+
+    def _extract_dimension_triplet(
+        self,
+        section_text: str,
+        label: str,
+    ) -> dict[str, str | None]:
+        normalized = self._normalize_text_for_parsing(section_text)
+
+        pattern = (
+            rf"{re.escape(label)}\s+"
+            rf"([+\-]?\d+(?:,\d{{3}})*(?:\.\d+)?)\s*in\.\s+"
+            rf"([+\-]?\d+(?:,\d{{3}})*(?:\.\d+)?)\s*in\.\s*/\s*"
+            rf"([+\-]?\d+(?:,\d{{3}})*(?:\.\d+)?)\s*in\."
+        )
+
+        match = re.search(pattern, normalized, flags=re.IGNORECASE)
+        if not match:
+            raise RuntimeError(
+                f"Could not extract blanking dimension for label [{label}] "
+                f"from text: {normalized}"
+            )
+
+        return {
+            "nominal": match.group(1),
+            "tol_1": match.group(2),
+            "tol_2": match.group(3),
+        }
+
+    def _extract_min_length_value(
+        self,
+        section_text: str,
+        label: str,
+    ) -> str | None:
+        normalized = self._normalize_text_for_parsing(section_text)
+
+        pattern = (
+            rf"{re.escape(label)}\s+"
+            rf"(?:min\.\s*)?"
+            rf"([+\-]?\d+(?:,\d{{3}})*(?:\.\d+)?)\s*in\."
+        )
+
+        match = re.search(pattern, normalized, flags=re.IGNORECASE)
+        if not match:
+            raise RuntimeError(
+                f"Could not extract blanking length for label [{label}] "
+                f"from text: {normalized}"
+            )
+
+        return match.group(1)
+
+    def _extract_first_number(self, text: str) -> str | None:
+        match = re.search(r"([+\-]?\d+(?:,\d{3})*(?:\.\d+)?)", text)
+        if match:
+            return match.group(1)
+        return None
+
+    def _lookup_value_by_contains(
+        self,
+        pairs: dict[str, str],
+        label: str,
+    ) -> str | None:
+        normalized_target = self._normalize_text_for_parsing(label).lower()
+
+        for key, value in pairs.items():
+            if normalized_target in key.lower():
+                return value
+        return None
+
+    def _is_joint_performance_label(self, label: str) -> bool:
+        candidates = [
+            "Tension Strength, with Sealability",
+            "Compression Strength, with Sealability",
+            "Internal Pressure Resistance",
+            "External Pressure Resistance",
+            "Maximum Bending, Structural",
+            "Maximum Bending, with Sealability",
+            "Maximum Load on Coupling Face",
+        ]
+
+        normalized_label = self._normalize_text_for_parsing(label).lower()
+
+        for candidate in candidates:
+            if self._normalize_text_for_parsing(candidate).lower() in normalized_label:
+                return True
+
+        return False
 
     def _get_connection_container(self) -> Any:
         page = self._require_page()

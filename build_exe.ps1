@@ -64,7 +64,7 @@ try {
     $vamMapperCheck = "from src.parsers.pots_doc_parser import PotsDocParser; from src.routers.partner_router import PartnerRouter; from src.mappers.vam_mapper import VamMapper; text='POTS Document number: 123 Rev: A\nCP Part Number ABC-001\nProduct Description Pup Joint 13CR(80) 5.5 17# VAM TOP BOX X 5.5 17# TSH WEDGE PIN OAL 120\nANSI/NACE MR0175/ISO 15156 (Yes/No) Yes\nQCP (Standard/Client Specific) Standard\n'; parsed=PotsDocParser().parse_text(text); routing=PartnerRouter().route(parsed); target=routing['targets'][0]; mapped=VamMapper().build_mapped_data(target=target, shared_data=routing['shared_data']); conn=mapped['connection']; assert mapped['partner'] == 'VAM'; assert mapped['side'] == 'upper'; assert mapped['drift_extraction'] is True; assert conn['name'] == 'TOP'; assert conn['od'] == '5-1/2'; assert conn['weight'] == '17.00'; assert conn['material_family'] == '13CR'; assert conn['yield_strength'] == '80'; assert conn['type'] == 'BOX'; print('vam mapper ok')"
     Invoke-Python @("-c", $vamMapperCheck)
 
-    Write-Host "Checking VAM adapter CDS opening..."
+    Write-Host "Checking VAM adapter data extraction..."
     Invoke-Python @("scripts/check_vam_adapter.py")
 
     Write-Host "Checking TSH mapper behavior..."
