@@ -1,8 +1,17 @@
 partners:
   VAM:
     display_name: "VAM"
+    company_name: "Vallourec"
     enabled: true
     adapter: "vam_adapter"
+    urls:
+      homepage: "https://www.vamservices.com"
+      connection_datasheet: "https://www.vamservices.com/product/configurator"
+      blanking_dimensions: "https://www.vamservices.com/product/configurator;blanking=true"
+    capabilities:
+      supports_connection_datasheet: true
+      supports_blanking_dimensions: true
+      requires_login: false
 
   TSH:
     display_name: "TSH (TenarisHydril)"

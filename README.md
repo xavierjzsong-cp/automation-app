@@ -25,6 +25,7 @@ src/mappers/vam_mapper.py
 src/adapters/base_adapter.py
 src/adapters/vam_adapter.py
 scripts/check_vam_adapter.py
+scripts/check_service_vam_flow.py
 src/writers/template_writer.py
 run_ui.py
 requirements.txt
@@ -35,7 +36,6 @@ Not implemented yet:
 
 ```text
 CustomTkinter UI
-VAM service integration
 Other partner adapters
 PyInstaller packaging
 ```
@@ -47,7 +47,7 @@ run_ui.py
     Minimal application entry point.
 
 src/services/template_generation_service.py
-    Minimal service class. Full workflow orchestration will be added later.
+    Orchestrates parser, router, mapper, optional VAM adapter execution, and writer.
 
 src/utils/app_paths.py
     Path helpers for source resources and per-user AppData files.
@@ -72,6 +72,9 @@ src/adapters/vam_adapter.py
 
 scripts/check_vam_adapter.py
     Smoke check for VAM adapter lifecycle, navigation, filter orchestration, connection selection orchestration, CDS opening orchestration, data extraction return flow, and parsing helpers.
+
+scripts/check_service_vam_flow.py
+    Smoke check for VAM mapper and adapter integration inside TemplateGenerationService.
 
 src/writers/template_writer.py
     Excel writer that fills parser-derived fields into a selected sheet.
@@ -130,6 +133,7 @@ python -c "import yaml; from pathlib import Path; partners=yaml.safe_load(Path('
 python -c "from src.parsers.pots_doc_parser import PotsDocParser; text='POTS Document number: 123 Rev: A\nCP Part Number ABC-001\nProduct Description Pup Joint 13CR(80) 5.5 17# VAM TOP BOX X 5.5 17# TSH WEDGE PIN OAL 120\nANSI/NACE MR0175/ISO 15156 (Yes/No) Yes\nQCP (Standard/Client Specific) Standard\n'; parsed=PotsDocParser().parse_text(text); assert parsed.part_number == 'ABC-001'; assert parsed.rev == 'A'; assert parsed.product_material_grade == '13CR(80)'; assert parsed.connections['upper'].family == 'VAM'; assert parsed.connections['lower'].family == 'TSH'; print('parser ok')"
 python -c "from src.adapters.vam_adapter import VamAdapter; print('vam adapter import ok')"
 python scripts/check_vam_adapter.py
+python scripts/check_service_vam_flow.py
 ```
 
 Or run the local build-check script:
@@ -161,6 +165,7 @@ VAM adapter data extraction smoke check
 TSH mapper behavior smoke check
 Writer behavior smoke check
 Service flow smoke check
+Service VAM adapter flow smoke check
 ```
 
 ## Runtime Paths

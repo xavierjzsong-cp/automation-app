@@ -49,7 +49,7 @@ try {
     Invoke-Python @("-c", "from src.services.template_generation_service import GenerationRequest, GenerationResult, TemplateGenerationService; from src.parsers.pots_doc_parser import PotsDocParser; from src.routers.partner_router import PartnerRouter; from src.mappers.tsh_mapper import TshMapper; from src.mappers.vam_mapper import VamMapper; from src.adapters.vam_adapter import VamAdapter; from src.writers.template_writer import TemplateWriter; from src.utils.app_paths import resource_path, get_ui_settings_path; print(resource_path('config/partners.yml')); print(get_ui_settings_path()); print('ok')")
 
     Write-Host "Checking YAML configuration..."
-    $yamlCheck = "import yaml; from pathlib import Path; partners=yaml.safe_load(Path('config/partners.yml').read_text(encoding='utf-8')); fields=yaml.safe_load(Path('config/field_mapping.yml').read_text(encoding='utf-8')); assert set(partners['partners']) == {'VAM', 'TSH', 'JFE', 'HT'}; assert {'od', 'wt', 'grade'} <= set(fields['fields']); print('yaml ok')"
+    $yamlCheck = "import yaml; from pathlib import Path; partners=yaml.safe_load(Path('config/partners.yml').read_text(encoding='utf-8')); fields=yaml.safe_load(Path('config/field_mapping.yml').read_text(encoding='utf-8')); assert set(partners['partners']) == {'VAM', 'TSH', 'JFE', 'HT'}; assert partners['partners']['VAM']['urls']['homepage']; assert partners['partners']['VAM']['urls']['connection_datasheet']; assert {'od', 'wt', 'grade'} <= set(fields['fields']); print('yaml ok')"
     Invoke-Python @("-c", $yamlCheck)
 
     Write-Host "Checking parser behavior..."
@@ -78,6 +78,9 @@ try {
     Write-Host "Checking service flow..."
     $serviceCheck = "from pathlib import Path; from tempfile import TemporaryDirectory; import fitz; from openpyxl import Workbook, load_workbook; from src.services.template_generation_service import GenerationRequest, TemplateGenerationService; text='POTS Document number: 123 Rev: A\nCP Part Number ABC-001\nProduct Description Pup Joint 13CR(80) 5.5 17# VAM TOP BOX X 5.5 17# TSH WEDGE PIN OAL 120\nANSI/NACE MR0175/ISO 15156 (Yes/No) Yes\nQCP (Standard/Client Specific) Standard\n'; tmp=TemporaryDirectory(); root=Path(tmp.name); pdf=root/'input.pdf'; template=root/'template.xlsx'; output_dir=root/'out'; doc=fitz.open(); page=doc.new_page(); page.insert_text((72, 72), text); doc.save(pdf); doc.close(); wb=Workbook(); ws=wb.active; ws.title='Target'; wb.save(template); request=GenerationRequest(input_path=pdf, template_path=template, output_dir=output_dir, target_sheet_name='Target', user_name='Tester'); result=TemplateGenerationService().generate(request); output=Path(result.output_file); assert output.exists(); assert result.routing_result['targets'][0]['side'] == 'upper'; assert result.routing_result['targets'][0]['partner'] == 'VAM'; assert result.routing_result['targets'][1]['side'] == 'lower'; assert result.routing_result['targets'][1]['partner'] == 'TSH'; wb2=load_workbook(output); sheet=wb2['Target']; assert sheet['B6'].value == 'ABC-001'; assert sheet['D6'].value == 'A'; assert sheet['B28'].value == '5.5 - 17# VAM TOP BOX'; assert sheet['B30'].value == '5.5 - 17# TSH W PIN'; wb2.close(); tmp.cleanup(); print('service ok')"
     Invoke-Python @("-c", $serviceCheck)
+
+    Write-Host "Checking service VAM adapter flow..."
+    Invoke-Python @("scripts/check_service_vam_flow.py")
 
     Write-Host "Build checks passed."
     Write-Host "PyInstaller packaging will be added after the application workflow is ready."
