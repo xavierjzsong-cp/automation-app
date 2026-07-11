@@ -104,9 +104,12 @@ class VamAdapter(BaseAdapter):
 
         self.select_connection(connection_name)
         self.wait_for_results()
+        result_index = int(mapped_data.get("result_index", 0))
+        cds_page = self.open_result_cds(result_index)
+        self._wait_for_cds_content_loaded(cds_page)
 
         raise NotImplementedError(
-            "VAM CDS opening is not implemented yet."
+            "VAM data extraction is not implemented yet."
         )
 
     def close(self) -> None:
@@ -309,11 +312,185 @@ class VamAdapter(BaseAdapter):
 
         raise RuntimeError("No results detected after applying filters")
 
+    def open_result_cds(self, result_index: int = 0) -> Page:
+        page = self._require_page()
+        context = self._require_context()
+
+        viewport_candidates = [
+            page.locator("[data-cy='configurator-resultsviewport']").first,
+            page.locator("cdk-virtual-scroll-viewport").first,
+        ]
+
+        viewport = None
+        for candidate in viewport_candidates:
+            try:
+                if candidate.is_visible(timeout=5000):
+                    viewport = candidate
+                    break
+            except Exception:
+                continue
+
+        if viewport is None:
+            raise RuntimeError("Could not find results viewport")
+
+        result_cards = viewport.locator("configurator-result-card")
+        try:
+            result_cards.first.wait_for(state="visible", timeout=10000)
+        except Exception as exc:
+            raise RuntimeError("No visible result cards found") from exc
+
+        count = result_cards.count()
+        if count == 0:
+            raise RuntimeError("No result cards available")
+
+        if result_index >= count:
+            raise IndexError(
+                f"Requested result_index={result_index}, but only {count} "
+                "visible result cards found"
+            )
+
+        target_card = result_cards.nth(result_index)
+        target_card.scroll_into_view_if_needed()
+        page.wait_for_timeout(500)
+
+        button_candidates = [
+            target_card.locator("[data-cy='view-cds-button']").first,
+            target_card.locator(".view-cds").first,
+            target_card.get_by_text("View CDS", exact=False).first,
+        ]
+
+        for button in button_candidates:
+            try:
+                if not button.is_visible(timeout=3000):
+                    continue
+
+                button.scroll_into_view_if_needed()
+                page.wait_for_timeout(300)
+
+                old_url = page.url
+                pages_before = list(context.pages)
+
+                button.click(force=True)
+                page.wait_for_timeout(2000)
+
+                if page.url != old_url and "specific-product" in page.url:
+                    self._wait_for_basic_page_load(page)
+                    return page
+
+                pages_after = list(context.pages)
+                if len(pages_after) > len(pages_before):
+                    cds_page = pages_after[-1]
+                    cds_page.set_default_timeout(self.timeout_ms)
+                    self._wait_for_basic_page_load(cds_page)
+                    return cds_page
+
+                try:
+                    page.wait_for_url("**/product/specific-product/**", timeout=5000)
+                    self._wait_for_basic_page_load(page)
+                    return page
+                except Exception:
+                    pass
+            except Exception:
+                continue
+
+        raise RuntimeError(f"Failed to click View CDS for result index [{result_index}]")
+
+    def _wait_for_basic_page_load(self, page: Page) -> None:
+        try:
+            page.wait_for_load_state("domcontentloaded", timeout=8000)
+        except Exception:
+            pass
+
+        try:
+            page.wait_for_load_state("networkidle", timeout=8000)
+        except Exception:
+            pass
+
+    def _wait_for_loader_to_disappear(
+        self,
+        page: Page,
+        timeout: int = 15000,
+    ) -> None:
+        loader_candidates = [
+            page.locator("[data-cy='cds-component-ui-loader']").first,
+            page.locator("ui-loader").first,
+            page.locator(".spinner").first,
+        ]
+
+        for loader in loader_candidates:
+            try:
+                if loader.is_visible(timeout=1500):
+                    loader.wait_for(state="hidden", timeout=timeout)
+                    return
+            except Exception:
+                continue
+
+    def _poll_page_text_until_ready(
+        self,
+        page: Page,
+        ready_patterns: list[str],
+        timeout_ms: int = 20000,
+        interval_ms: int = 1000,
+        log_label: str = "",
+    ) -> str:
+        elapsed = 0
+        last_text = ""
+        body = page.locator("body").first
+
+        while elapsed < timeout_ms:
+            try:
+                text = body.inner_text(timeout=3000).strip()
+                last_text = text
+
+                normalized = self._normalize_text_for_parsing(text)
+                for pattern in ready_patterns:
+                    if re.search(pattern, normalized, flags=re.IGNORECASE):
+                        return text
+            except Exception:
+                pass
+
+            page.wait_for_timeout(interval_ms)
+            elapsed += interval_ms
+
+        raise RuntimeError(
+            f"Timed out waiting for page content readiness in [{log_label}]. "
+            f"Last text snippet: {last_text[:500]}"
+        )
+
+    def _wait_for_cds_content_loaded(self, cds_page: Page) -> None:
+        self._wait_for_loader_to_disappear(cds_page, timeout=15000)
+
+        self._poll_page_text_until_ready(
+            page=cds_page,
+            ready_patterns=[
+                r"Joint Performances",
+                r"Connection Properties",
+                r"Pipe Body Properties",
+            ],
+            timeout_ms=10000,
+            interval_ms=1000,
+            log_label="cds_page_shell",
+        )
+
+        self._poll_page_text_until_ready(
+            page=cds_page,
+            ready_patterns=[r"\bpsi\b", r"\bklb\b"],
+            timeout_ms=25000,
+            interval_ms=1000,
+            log_label="cds_page_values",
+        )
+
     def _require_page(self) -> Page:
         if self.page is None:
             raise RuntimeError("VAM adapter page is not available.")
 
         return self.page
+
+    def _require_context(self) -> BrowserContext:
+        if self.context is None:
+            raise RuntimeError("VAM adapter browser context is not available.")
+
+        return self.context
 
     def _build_filters_from_mapped_data(
         self,
@@ -667,6 +844,11 @@ class VamAdapter(BaseAdapter):
             return str(int(number))
 
         return f"{number:.6f}".rstrip("0").rstrip(".")
+
+    def _normalize_text_for_parsing(self, text: str) -> str:
+        text = text.replace("\u00a0", " ")
+        text = re.sub(r"\s+", " ", text)
+        return text.strip()
 
     def _get_connection_container(self) -> Any:
         page = self._require_page()

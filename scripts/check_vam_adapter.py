@@ -110,8 +110,11 @@ class FakePlaywright:
 class RecordingVamAdapter(VamAdapter):
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         self.connection_calls: list[str] = []
+        self.cds_pages: list[object] = []
         self.dropdown_calls: list[tuple[str, str]] = []
         self.grade_calls: list[tuple[str | None, str | None]] = []
+        self.open_result_cds_calls: list[int] = []
+        self.wait_for_cds_content_loaded_calls: list[object] = []
         self.wait_for_results_calls = 0
         super().__init__(*args, **kwargs)
 
@@ -135,6 +138,15 @@ class RecordingVamAdapter(VamAdapter):
 
     def wait_for_results(self) -> None:
         self.wait_for_results_calls += 1
+
+    def open_result_cds(self, result_index: int = 0) -> object:
+        cds_page = object()
+        self.cds_pages.append(cds_page)
+        self.open_result_cds_calls.append(result_index)
+        return cds_page
+
+    def _wait_for_cds_content_loaded(self, cds_page: object) -> None:
+        self.wait_for_cds_content_loaded_calls.append(cds_page)
 
 
 def build_mapped_data() -> dict[str, Any]:
@@ -188,7 +200,7 @@ def main() -> None:
             adapter.run(mapped)
             raise AssertionError("Expected NotImplementedError for VAM automation.")
         except NotImplementedError as exc:
-            assert str(exc) == "VAM CDS opening is not implemented yet."
+            assert str(exc) == "VAM data extraction is not implemented yet."
 
         assert adapter.page.goto_calls == [
             {
@@ -213,6 +225,8 @@ def main() -> None:
         assert adapter.grade_calls == [("13CR", "80")]
         assert adapter.connection_calls == ["TOP"]
         assert adapter.wait_for_results_calls == 1
+        assert adapter.open_result_cds_calls == [0]
+        assert adapter.wait_for_cds_content_loaded_calls == adapter.cds_pages
         assert adapter._grade_option_matches("API 13CR 80", "13CR", "80")
         assert adapter._grade_option_matches("13CR 80 ksi", "13CR", "80.0")
         assert not adapter._grade_option_matches("Carbon Steel 80", "13CR", "80")
