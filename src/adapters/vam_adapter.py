@@ -97,8 +97,16 @@ class VamAdapter(BaseAdapter):
 
             self.select_dropdown_option_by_index(field_label, value)
 
+        connection_data = mapped_data.get("connection") or {}
+        connection_name = connection_data.get("name")
+        if not connection_name:
+            raise ValueError("Mapped data is missing connection.name")
+
+        self.select_connection(connection_name)
+        self.wait_for_results()
+
         raise NotImplementedError(
-            "VAM connection selection is not implemented yet."
+            "VAM CDS opening is not implemented yet."
         )
 
     def close(self) -> None:
@@ -250,6 +258,56 @@ class VamAdapter(BaseAdapter):
             pass
 
         return selected
+
+    def select_connection(self, connection_name: str) -> None:
+        page = self._require_page()
+        container = self._get_connection_container()
+
+        try:
+            search_area = container.locator(".connection-search").first
+            search_input_candidates = [
+                search_area.locator("input").first,
+                search_area.locator("input[type='search']").first,
+                search_area.locator("input[placeholder*='Search']").first,
+            ]
+
+            for search_input in search_input_candidates:
+                try:
+                    if search_input.is_visible(timeout=3000):
+                        search_input.click()
+                        search_input.fill(connection_name)
+                        page.wait_for_timeout(500)
+                        break
+                except Exception:
+                    continue
+        except Exception:
+            pass
+
+        self._click_connection_card(container, connection_name)
+
+        page.wait_for_timeout(1500)
+        try:
+            page.wait_for_load_state("networkidle", timeout=3000)
+        except Exception:
+            pass
+
+    def wait_for_results(self) -> None:
+        page = self._require_page()
+        candidates = [
+            page.locator("[data-cy='configurator-resultsviewport']").first,
+            page.locator("cdk-virtual-scroll-viewport").first,
+            page.locator("configurator-result-card").first,
+            page.locator("[data-cy='view-cds-button']").first,
+        ]
+
+        for candidate in candidates:
+            try:
+                candidate.wait_for(state="visible", timeout=3000)
+                return
+            except Exception:
+                continue
+
+        raise RuntimeError("No results detected after applying filters")
 
     def _require_page(self) -> Page:
         if self.page is None:
@@ -609,6 +667,70 @@ class VamAdapter(BaseAdapter):
             return str(int(number))
 
         return f"{number:.6f}".rstrip("0").rstrip(".")
+
+    def _get_connection_container(self) -> Any:
+        page = self._require_page()
+        candidates = [
+            page.locator("div.connection-container").first,
+            page.locator(".connections .connection-container").first,
+            page.locator(".connections").locator(".connection-container").first,
+        ]
+
+        for candidate in candidates:
+            try:
+                if candidate.is_visible(timeout=3000):
+                    return candidate
+            except Exception:
+                continue
+
+        raise RuntimeError("Could not find connection container")
+
+    def _click_connection_card(self, container: Any, connection_name: str) -> None:
+        display = container.locator(".connection-display").first
+
+        text_candidates = [
+            connection_name,
+            connection_name.replace("VAM ", "VAM\u00ae "),
+            connection_name.replace(" ", "\u00a0"),
+        ]
+
+        for text in text_candidates:
+            try:
+                label = display.get_by_text(text, exact=False).first
+                label.wait_for(state="visible", timeout=3000)
+                label.scroll_into_view_if_needed()
+
+                card_candidates = [
+                    label.locator("xpath=ancestor::button[1]").first,
+                    label.locator("xpath=ancestor::a[1]").first,
+                    label.locator("xpath=ancestor::*[@role='button'][1]").first,
+                    label.locator(
+                        "xpath=ancestor::div[contains(@class,'card')][1]"
+                    ).first,
+                    label.locator(
+                        "xpath=ancestor::div[contains(@class,'item')][1]"
+                    ).first,
+                    label.locator(
+                        "xpath=ancestor::div[contains(@class,'connection')][1]"
+                    ).first,
+                ]
+
+                for card in card_candidates:
+                    try:
+                        if card.is_visible(timeout=1500):
+                            card.scroll_into_view_if_needed()
+                            self._require_page().wait_for_timeout(300)
+                            card.click(force=True)
+                            return
+                    except Exception:
+                        continue
+
+                label.click(force=True)
+                return
+            except Exception:
+                continue
+
+        raise RuntimeError(f"Could not click connection card [{connection_name}]")
 
     def _validate_mapped_data(self, mapped_data: dict[str, Any]) -> None:
         partner = (mapped_data.get("partner") or "").upper()

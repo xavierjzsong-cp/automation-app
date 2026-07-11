@@ -35,7 +35,7 @@ Not implemented yet:
 
 ```text
 CustomTkinter UI
-Real VAM connection selection and extraction
+Real VAM CDS opening and extraction
 Other partner adapters
 PyInstaller packaging
 ```
@@ -68,10 +68,10 @@ src/adapters/base_adapter.py
     Shared interface for partner website adapters.
 
 src/adapters/vam_adapter.py
-    VAM adapter interface with mapped-data validation, Playwright browser lifecycle management, basic configurator navigation, and filter selection.
+    VAM adapter interface with mapped-data validation, Playwright browser lifecycle management, basic configurator navigation, filter selection, and connection selection.
 
 scripts/check_vam_adapter.py
-    Smoke check for VAM adapter lifecycle, navigation, filter orchestration, and grade matching.
+    Smoke check for VAM adapter lifecycle, navigation, filter orchestration, connection selection orchestration, and grade matching.
 
 src/writers/template_writer.py
     Excel writer that fills parser-derived fields into a selected sheet.
@@ -157,7 +157,7 @@ Minimal YAML configuration loading
 Parser behavior smoke check
 Router behavior smoke check
 VAM mapper behavior smoke check
-VAM adapter filter smoke check
+VAM adapter connection smoke check
 TSH mapper behavior smoke check
 Writer behavior smoke check
 Service flow smoke check

@@ -109,8 +109,10 @@ class FakePlaywright:
 
 class RecordingVamAdapter(VamAdapter):
     def __init__(self, *args: Any, **kwargs: Any) -> None:
+        self.connection_calls: list[str] = []
         self.dropdown_calls: list[tuple[str, str]] = []
         self.grade_calls: list[tuple[str | None, str | None]] = []
+        self.wait_for_results_calls = 0
         super().__init__(*args, **kwargs)
 
     def select_dropdown_option_by_index(
@@ -127,6 +129,12 @@ class RecordingVamAdapter(VamAdapter):
     ) -> bool:
         self.grade_calls.append((material_family, yield_strength))
         return True
+
+    def select_connection(self, connection_name: str) -> None:
+        self.connection_calls.append(connection_name)
+
+    def wait_for_results(self) -> None:
+        self.wait_for_results_calls += 1
 
 
 def build_mapped_data() -> dict[str, Any]:
@@ -179,8 +187,8 @@ def main() -> None:
         try:
             adapter.run(mapped)
             raise AssertionError("Expected NotImplementedError for VAM automation.")
-        except NotImplementedError:
-            pass
+        except NotImplementedError as exc:
+            assert str(exc) == "VAM CDS opening is not implemented yet."
 
         assert adapter.page.goto_calls == [
             {
@@ -203,6 +211,8 @@ def main() -> None:
             ("Drift Option", "API Drift"),
         ]
         assert adapter.grade_calls == [("13CR", "80")]
+        assert adapter.connection_calls == ["TOP"]
+        assert adapter.wait_for_results_calls == 1
         assert adapter._grade_option_matches("API 13CR 80", "13CR", "80")
         assert adapter._grade_option_matches("13CR 80 ksi", "13CR", "80.0")
         assert not adapter._grade_option_matches("Carbon Steel 80", "13CR", "80")
