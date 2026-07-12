@@ -17,6 +17,9 @@ from src.adapters.tsh_adapter import TshAdapter  # noqa: E402
 
 class FakePage:
     def __init__(self) -> None:
+        self.goto_calls: list[dict[str, Any]] = []
+        self.load_states: list[dict[str, Any]] = []
+        self.ready_checks: list[dict[str, Any]] = []
         self.timeout = None
         self.navigation_timeout = None
 
@@ -25,6 +28,21 @@ class FakePage:
 
     def set_default_navigation_timeout(self, timeout: int) -> None:
         self.navigation_timeout = timeout
+
+    def goto(self, url: str, wait_until: str, timeout: int) -> None:
+        self.goto_calls.append(
+            {
+                "url": url,
+                "wait_until": wait_until,
+                "timeout": timeout,
+            }
+        )
+
+    def wait_for_load_state(self, state: str, timeout: int) -> None:
+        self.load_states.append({"state": state, "timeout": timeout})
+
+    def wait_for_function(self, script: str, arg: int, timeout: int) -> None:
+        self.ready_checks.append({"arg": arg, "timeout": timeout})
 
 
 class FakeContext:
@@ -145,7 +163,25 @@ def main() -> None:
             adapter.run(build_mapped_data())
             raise AssertionError("Expected NotImplementedError for TSH automation.")
         except NotImplementedError as exc:
-            assert str(exc) == "TSH Playwright automation is not implemented yet."
+            assert str(exc) == "TSH datasheet selection is not implemented yet."
+
+        assert adapter.page.goto_calls == [
+            {
+                "url": "https://dcp.tenaris.com/Product_Datasheet",
+                "wait_until": "domcontentloaded",
+                "timeout": 5678,
+            }
+        ]
+        assert adapter.page.load_states == [{"state": "load", "timeout": 10000}]
+        assert adapter.page.ready_checks == [{"arg": 4, "timeout": 20000}]
+
+        adapter.open_blanking_page()
+        assert adapter.page.goto_calls[-1] == {
+            "url": "https://dcp.tenaris.com/BlankingDimensions",
+            "wait_until": "domcontentloaded",
+            "timeout": 5678,
+        }
+        assert adapter.page.ready_checks[-1] == {"arg": 3, "timeout": 20000}
     finally:
         adapter.close()
         assert fake_playwright.chromium.browser.context.closed is True

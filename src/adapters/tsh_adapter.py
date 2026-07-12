@@ -7,7 +7,14 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from playwright.sync_api import Browser, BrowserContext, Page, Playwright, sync_playwright
+from playwright.sync_api import (
+    Browser,
+    BrowserContext,
+    Page,
+    Playwright,
+    TimeoutError as PlaywrightTimeoutError,
+    sync_playwright,
+)
 
 from src.adapters.base_adapter import BaseAdapter
 
@@ -59,11 +66,20 @@ class TshAdapter(BaseAdapter):
         self._start_browser(playwright_factory)
 
     def run(self, mapped_data: dict[str, Any]) -> dict[str, Any]:
-        """Validate mapped data and fail explicitly until automation exists."""
+        """Validate mapped data and open the TSH datasheet page."""
         self._validate_mapped_data(mapped_data)
+        self.open_datasheet_page()
         raise NotImplementedError(
-            "TSH Playwright automation is not implemented yet."
+            "TSH datasheet selection is not implemented yet."
         )
+
+    def open_datasheet_page(self) -> None:
+        self._goto_page(self.datasheet_url)
+        self._wait_for_dropdowns_ready(expected_count=4)
+
+    def open_blanking_page(self) -> None:
+        self._goto_page(self.blanking_url)
+        self._wait_for_dropdowns_ready(expected_count=3)
 
     def close(self) -> None:
         """Release browser resources idempotently."""
@@ -112,6 +128,75 @@ class TshAdapter(BaseAdapter):
             resource.close()
         except Exception:
             logger.debug("Failed to close TSH adapter %s.", name, exc_info=True)
+
+    def _goto_page(self, url: str) -> None:
+        page = self._require_page()
+
+        try:
+            page.goto(
+                url,
+                wait_until="domcontentloaded",
+                timeout=self.navigation_timeout_ms,
+            )
+        except PlaywrightTimeoutError:
+            logger.warning(
+                "Navigation timeout. Continue with page readiness check: %s",
+                url,
+            )
+
+        try:
+            page.wait_for_load_state("load", timeout=10000)
+        except PlaywrightTimeoutError:
+            pass
+
+    def _wait_for_dropdowns_ready(self, expected_count: int) -> None:
+        page = self._require_page()
+        page.wait_for_function(
+            """
+            (expectedCount) => {
+                const scope = document.querySelector(
+                    "div.select-search div.drop-downs-container"
+                );
+
+                if (!scope) {
+                    return false;
+                }
+
+                function isVisible(el) {
+                    if (!el) return false;
+                    const style = window.getComputedStyle(el);
+                    const rect = el.getBoundingClientRect();
+
+                    return style
+                        && style.display !== "none"
+                        && style.visibility !== "hidden"
+                        && rect.width > 0
+                        && rect.height > 0;
+                }
+
+                const roots = Array.from(
+                    scope.querySelectorAll("div.select-dropdown[data-component='dropdown']")
+                ).filter(root => {
+                    const optionCount = root.querySelectorAll("option.dropdown-option").length;
+                    const trigger = root.querySelector(
+                        ".select2-selection, .select2-selection__rendered, [role='combobox'], .dropdownicon"
+                    );
+
+                    return optionCount > 1 && (isVisible(root) || isVisible(trigger));
+                });
+
+                return roots.length >= expectedCount;
+            }
+            """,
+            arg=expected_count,
+            timeout=20000,
+        )
+
+    def _require_page(self) -> Page:
+        if self.page is None:
+            raise RuntimeError("TSH adapter page is not available.")
+
+        return self.page
 
     def _validate_mapped_data(self, mapped_data: dict[str, Any]) -> None:
         partner = (mapped_data.get("partner") or "").upper()
