@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
+
+from playwright.sync_api import Browser, BrowserContext, Page, Playwright, sync_playwright
 
 from src.adapters.base_adapter import BaseAdapter
 
@@ -36,6 +39,7 @@ class TshAdapter(BaseAdapter):
         slow_mo: int = 300,
         timeout_ms: int = 10000,
         navigation_timeout_ms: int = 60000,
+        playwright_factory: Callable[[], Any] = sync_playwright,
     ) -> None:
         self.base_url = base_url
         self.datasheet_url = datasheet_url
@@ -45,7 +49,14 @@ class TshAdapter(BaseAdapter):
         self.slow_mo = slow_mo
         self.timeout_ms = timeout_ms
         self.navigation_timeout_ms = navigation_timeout_ms
+
+        self.playwright: Playwright | None = None
+        self.browser: Browser | None = None
+        self.context: BrowserContext | None = None
+        self.page: Page | None = None
         self._closed = False
+
+        self._start_browser(playwright_factory)
 
     def run(self, mapped_data: dict[str, Any]) -> dict[str, Any]:
         """Validate mapped data and fail explicitly until automation exists."""
@@ -55,8 +66,52 @@ class TshAdapter(BaseAdapter):
         )
 
     def close(self) -> None:
-        """Release adapter resources idempotently."""
+        """Release browser resources idempotently."""
+        if self._closed:
+            return
+
+        self._safe_close("context", self.context)
+        self.context = None
+
+        self._safe_close("browser", self.browser)
+        self.browser = None
+
+        if self.playwright is not None:
+            try:
+                self.playwright.stop()
+            except Exception:
+                logger.debug("Failed to stop TSH Playwright runtime.", exc_info=True)
+            finally:
+                self.playwright = None
+
+        self.page = None
         self._closed = True
+
+    def _start_browser(self, playwright_factory: Callable[[], Any]) -> None:
+        self.logs_dir.mkdir(parents=True, exist_ok=True)
+
+        try:
+            self.playwright = playwright_factory().start()
+            self.browser = self.playwright.chromium.launch(
+                headless=self.headless,
+                slow_mo=self.slow_mo,
+            )
+            self.context = self.browser.new_context()
+            self.page = self.context.new_page()
+            self.page.set_default_timeout(self.timeout_ms)
+            self.page.set_default_navigation_timeout(self.navigation_timeout_ms)
+        except Exception:
+            self.close()
+            raise
+
+    def _safe_close(self, name: str, resource: Any) -> None:
+        if resource is None:
+            return
+
+        try:
+            resource.close()
+        except Exception:
+            logger.debug("Failed to close TSH adapter %s.", name, exc_info=True)
 
     def _validate_mapped_data(self, mapped_data: dict[str, Any]) -> None:
         partner = (mapped_data.get("partner") or "").upper()
