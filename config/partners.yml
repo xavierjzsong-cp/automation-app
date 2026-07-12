@@ -15,8 +15,17 @@ partners:
 
   TSH:
     display_name: "TSH (TenarisHydril)"
+    company_name: "Tenaris"
     enabled: true
     adapter: "tsh_adapter"
+    urls:
+      homepage: "https://dcp.tenaris.com/en"
+      connection_datasheet: "https://dcp.tenaris.com/Product_Datasheet"
+      blanking_dimensions: "https://dcp.tenaris.com/BlankingDimensions"
+    capabilities:
+      supports_connection_datasheet: true
+      supports_blanking_dimensions: true
+      requires_login: false
 
   JFE:
     display_name: "JFE"

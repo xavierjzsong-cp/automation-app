@@ -23,8 +23,10 @@ src/routers/partner_router.py
 src/mappers/tsh_mapper.py
 src/mappers/vam_mapper.py
 src/adapters/base_adapter.py
+src/adapters/tsh_adapter.py
 src/adapters/vam_adapter.py
 scripts/check_vam_adapter.py
+scripts/check_tsh_adapter.py
 scripts/check_service_vam_flow.py
 src/writers/template_writer.py
 run_ui.py
@@ -37,6 +39,7 @@ Not implemented yet:
 ```text
 CustomTkinter UI
 Other partner adapters
+Real TSH browser automation
 PyInstaller packaging
 ```
 
@@ -67,11 +70,17 @@ src/mappers/tsh_mapper.py
 src/adapters/base_adapter.py
     Shared interface for partner website adapters.
 
+src/adapters/tsh_adapter.py
+    TSH adapter interface with mapped-data validation. Real browser automation will be added in later steps.
+
 src/adapters/vam_adapter.py
     VAM adapter with mapped-data validation, Playwright browser lifecycle management, configurator navigation, filter selection, connection selection, CDS opening, and data extraction.
 
 scripts/check_vam_adapter.py
     Smoke check for VAM adapter lifecycle, navigation, filter orchestration, connection selection orchestration, CDS opening orchestration, data extraction return flow, and parsing helpers.
+
+scripts/check_tsh_adapter.py
+    Smoke check for TSH adapter construction, mapped-data validation, and explicit not-implemented behavior.
 
 scripts/check_service_vam_flow.py
     Smoke check for VAM mapper and adapter integration inside TemplateGenerationService.
@@ -133,6 +142,7 @@ python -c "import yaml; from pathlib import Path; partners=yaml.safe_load(Path('
 python -c "from src.parsers.pots_doc_parser import PotsDocParser; text='POTS Document number: 123 Rev: A\nCP Part Number ABC-001\nProduct Description Pup Joint 13CR(80) 5.5 17# VAM TOP BOX X 5.5 17# TSH WEDGE PIN OAL 120\nANSI/NACE MR0175/ISO 15156 (Yes/No) Yes\nQCP (Standard/Client Specific) Standard\n'; parsed=PotsDocParser().parse_text(text); assert parsed.part_number == 'ABC-001'; assert parsed.rev == 'A'; assert parsed.product_material_grade == '13CR(80)'; assert parsed.connections['upper'].family == 'VAM'; assert parsed.connections['lower'].family == 'TSH'; print('parser ok')"
 python -c "from src.adapters.vam_adapter import VamAdapter; print('vam adapter import ok')"
 python scripts/check_vam_adapter.py
+python scripts/check_tsh_adapter.py
 python scripts/check_service_vam_flow.py
 ```
 
@@ -163,6 +173,7 @@ Router behavior smoke check
 VAM mapper behavior smoke check
 VAM adapter data extraction smoke check
 TSH mapper behavior smoke check
+TSH adapter interface smoke check
 Writer behavior smoke check
 Service flow smoke check
 Service VAM adapter flow smoke check
