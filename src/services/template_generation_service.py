@@ -8,6 +8,7 @@ from typing import Any, Callable
 
 import yaml
 
+from src.adapters.tsh_adapter import TshAdapter
 from src.adapters.vam_adapter import VamAdapter
 from src.mappers.tsh_mapper import TshMapper
 from src.mappers.vam_mapper import VamMapper
@@ -77,6 +78,7 @@ class TemplateGenerationService:
         }
         self.adapter_factories = adapter_factories or {
             "VAM": VamAdapter,
+            "TSH": TshAdapter,
         }
         self.partners_config_path = Path(partners_config_path) if partners_config_path else resource_path("config/partners.yml")
         self.logs_dir = Path(logs_dir) if logs_dir else get_logs_dir(create=False)
@@ -184,25 +186,45 @@ class TemplateGenerationService:
         partner_config = self._get_partner_config(partners_config, partner)
         urls = partner_config.get("urls") or {}
 
-        if partner != "VAM":
-            raise ValueError(f"Unsupported partner adapter: {partner}")
-
         base_url = urls.get("homepage")
-        configurator_url = urls.get("connection_datasheet")
         if not base_url:
-            raise ValueError("VAM config missing urls.homepage")
-        if not configurator_url:
-            raise ValueError("VAM config missing urls.connection_datasheet")
+            raise ValueError(f"{partner} config missing urls.homepage")
 
         adapter_factory = self.adapter_factories[partner]
-        adapter = adapter_factory(
-            base_url=base_url,
-            configurator_url=configurator_url,
-            logs_dir=self.logs_dir,
-            headless=not show_browser,
-            slow_mo=300,
-            timeout_ms=10000,
-        )
+
+        if partner == "VAM":
+            configurator_url = urls.get("connection_datasheet")
+            if not configurator_url:
+                raise ValueError("VAM config missing urls.connection_datasheet")
+
+            adapter = adapter_factory(
+                base_url=base_url,
+                configurator_url=configurator_url,
+                logs_dir=self.logs_dir,
+                headless=not show_browser,
+                slow_mo=300,
+                timeout_ms=10000,
+            )
+        elif partner == "TSH":
+            datasheet_url = urls.get("connection_datasheet")
+            blanking_url = urls.get("blanking_dimensions")
+            if not datasheet_url:
+                raise ValueError("TSH config missing urls.connection_datasheet")
+            if not blanking_url:
+                raise ValueError("TSH config missing urls.blanking_dimensions")
+
+            adapter = adapter_factory(
+                base_url=base_url,
+                datasheet_url=datasheet_url,
+                blanking_url=blanking_url,
+                logs_dir=self.logs_dir,
+                headless=not show_browser,
+                slow_mo=300,
+                timeout_ms=10000,
+                navigation_timeout_ms=60000,
+            )
+        else:
+            raise ValueError(f"Unsupported partner adapter: {partner}")
 
         try:
             adapter_result = adapter.run(mapped_result)

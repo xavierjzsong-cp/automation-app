@@ -28,6 +28,7 @@ src/adapters/vam_adapter.py
 scripts/check_vam_adapter.py
 scripts/check_tsh_adapter.py
 scripts/check_service_vam_flow.py
+scripts/check_service_tsh_flow.py
 src/writers/template_writer.py
 run_ui.py
 requirements.txt
@@ -83,6 +84,9 @@ scripts/check_tsh_adapter.py
 
 scripts/check_service_vam_flow.py
     Smoke check for VAM mapper and adapter integration inside TemplateGenerationService.
+
+scripts/check_service_tsh_flow.py
+    Smoke check for TSH mapper and adapter integration inside TemplateGenerationService.
 
 src/writers/template_writer.py
     Excel writer that fills parser-derived fields into a selected sheet.
@@ -143,6 +147,7 @@ python -c "from src.adapters.vam_adapter import VamAdapter; print('vam adapter i
 python scripts/check_vam_adapter.py
 python scripts/check_tsh_adapter.py
 python scripts/check_service_vam_flow.py
+python scripts/check_service_tsh_flow.py
 ```
 
 Or run the local build-check script:
@@ -176,6 +181,7 @@ TSH adapter blanking extraction smoke check
 Writer behavior smoke check
 Service flow smoke check
 Service VAM adapter flow smoke check
+Service TSH adapter flow smoke check
 ```
 
 ## Runtime Paths

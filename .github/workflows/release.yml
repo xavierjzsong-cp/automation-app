@@ -83,6 +83,10 @@ jobs:
         shell: pwsh
         run: python scripts/check_service_vam_flow.py
 
+      - name: Check service TSH adapter flow
+        shell: pwsh
+        run: python scripts/check_service_tsh_flow.py
+
       - name: Print release placeholder
         shell: pwsh
         run: |

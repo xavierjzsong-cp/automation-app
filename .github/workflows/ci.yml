@@ -81,3 +81,7 @@ jobs:
       - name: Check service VAM adapter flow
         shell: pwsh
         run: python scripts/check_service_vam_flow.py
+
+      - name: Check service TSH adapter flow
+        shell: pwsh
+        run: python scripts/check_service_tsh_flow.py

@@ -85,6 +85,9 @@ try {
     Write-Host "Checking service VAM adapter flow..."
     Invoke-Python @("scripts/check_service_vam_flow.py")
 
+    Write-Host "Checking service TSH adapter flow..."
+    Invoke-Python @("scripts/check_service_tsh_flow.py")
+
     Write-Host "Build checks passed."
     Write-Host "PyInstaller packaging will be added after the application workflow is ready."
 }
