@@ -26,6 +26,8 @@ logger = logging.getLogger(__name__)
 class TshAdapter(BaseAdapter):
     """Automate the TSH datasheet page until extraction is implemented."""
 
+    NA = "NA"
+
     REQUIRED_CONNECTION_FIELDS = {
         "name",
         "od",
@@ -67,9 +69,10 @@ class TshAdapter(BaseAdapter):
         self._start_browser(playwright_factory)
 
     def run(self, mapped_data: dict[str, Any]) -> dict[str, Any]:
-        """Validate mapped data and select the TSH datasheet dropdowns."""
+        """Validate mapped data and extract TSH datasheet values."""
         self._validate_mapped_data(mapped_data)
         connection = mapped_data["connection"]
+        drift_extraction = bool(mapped_data.get("drift_extraction"))
 
         self.open_datasheet_page()
         self._select_od(connection["od"])
@@ -80,9 +83,17 @@ class TshAdapter(BaseAdapter):
         )
         self._select_connection(connection["name"])
 
-        raise NotImplementedError(
-            "TSH datasheet extraction is not implemented yet."
-        )
+        self._wait_for_connection_loaded()
+
+        drift_data: dict[str, Any] = {"drift": self.NA}
+        if drift_extraction:
+            drift_data = {"drift": self._extract_drift_size()}
+
+        datasheet_result = self._extract_connection_performance()
+        return {
+            **datasheet_result,
+            **drift_data,
+        }
 
     def open_datasheet_page(self) -> None:
         self._goto_page(self.datasheet_url)
@@ -727,10 +738,122 @@ class TshAdapter(BaseAdapter):
         return re.findall(r"\d+(?:\.\d+)?", normalized_text)
 
     def _safe_float(self, value: str) -> float | None:
-        try:
-            return float(value)
-        except (TypeError, ValueError):
+        if value is None:
             return None
+
+        try:
+            return float(str(value).replace(",", "").strip())
+        except ValueError:
+            return None
+
+    def _wait_for_connection_loaded(self) -> None:
+        self._require_page().wait_for_function(
+            """
+            () => {
+                const txt = document.body.innerText || "";
+                return txt.includes("Pipe Body Data")
+                    && txt.includes("Connection Data")
+                    && txt.includes("Performance")
+                    && txt.includes("Joint Yield Strength")
+                    && txt.includes("Compression Strength");
+            }
+            """,
+            timeout=20000,
+        )
+
+    def _extract_connection_performance(self) -> dict[str, Any]:
+        body_text = self._require_page().locator("body").inner_text(timeout=5000)
+        normalized = self._normalize_text(body_text)
+
+        connection_section = self._extract_section(
+            text=normalized,
+            start_label="Connection Data",
+            end_candidates=["Make-Up Torques", "Operation Limit Torques"],
+        )
+
+        performance_section = self._extract_section(
+            text=connection_section,
+            start_label="Performance",
+            end_candidates=["Make-Up Torques", "Operation Limit Torques"],
+        )
+
+        return {
+            "tensile": self._extract_first_number_after_label(
+                performance_section,
+                "Joint Yield Strength",
+            ),
+            "compression": self._extract_first_number_after_label(
+                performance_section,
+                "Compression Strength",
+            ),
+            "burst": self._extract_first_number_after_label(
+                performance_section,
+                "Internal Pressure Capacity",
+            ),
+            "collapse": self._extract_first_number_after_label(
+                performance_section,
+                "External Pressure Capacity",
+            ),
+        }
+
+    def _extract_drift_size(self) -> str | None:
+        body_text = self._require_page().locator("body").inner_text(timeout=5000)
+        normalized = self._normalize_text(body_text)
+
+        pipe_body_section = self._extract_section(
+            text=normalized,
+            start_label="Pipe Body Data",
+            end_candidates=["Connection Data"],
+        )
+
+        geometry_section = self._extract_section(
+            text=pipe_body_section,
+            start_label="Geometry",
+            end_candidates=["Performance"],
+        )
+
+        drift = self._extract_first_number_after_label(
+            geometry_section,
+            "Drift",
+        )
+
+        if drift:
+            return drift
+
+        raise RuntimeError(
+            f"Could not extract TSH Drift from datasheet Pipe Body Data -> Geometry section: "
+            f"{geometry_section[:500]}"
+        )
+
+    def _extract_section(
+        self,
+        text: str,
+        start_label: str,
+        end_candidates: list[str],
+    ) -> str:
+        start_index = text.find(start_label)
+        if start_index == -1:
+            return text
+
+        end_index = len(text)
+        for candidate in end_candidates:
+            index = text.find(candidate, start_index + len(start_label))
+            if index != -1 and index < end_index:
+                end_index = index
+
+        return text[start_index:end_index].strip()
+
+    def _extract_first_number_after_label(self, text: str, label: str) -> str | None:
+        pattern = rf"{re.escape(label)}\s+([+\-]?\d+(?:,\d{{3}})*(?:\.\d+)?)"
+        match = re.search(pattern, text, flags=re.IGNORECASE)
+        if match:
+            return match.group(1)
+        return None
+
+    def _normalize_text(self, text: str) -> str:
+        text = text.replace("\u00a0", " ")
+        text = re.sub(r"\s+", " ", text)
+        return text.strip()
 
     def _require_page(self) -> Page:
         if self.page is None:

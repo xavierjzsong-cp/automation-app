@@ -71,7 +71,7 @@ try {
     $tshMapperCheck = "from src.parsers.pots_doc_parser import PotsDocParser; from src.routers.partner_router import PartnerRouter; from src.mappers.tsh_mapper import TshMapper; text='POTS Document number: 123 Rev: A\nCP Part Number ABC-001\nProduct Description Pup Joint 13CR(80) 5.5 17# VAM TOP BOX X 5.5 17# TSH WEDGE PIN OAL 120\nANSI/NACE MR0175/ISO 15156 (Yes/No) Yes\nQCP (Standard/Client Specific) Standard\n'; parsed=PotsDocParser().parse_text(text); routing=PartnerRouter().route(parsed); target=routing['targets'][1]; mapped=TshMapper().build_mapped_data(target=target, shared_data=routing['shared_data']); conn=mapped['connection']; assert mapped['partner'] == 'TSH'; assert mapped['side'] == 'lower'; assert mapped['drift_extraction'] is True; assert conn['name'] == 'WEDGE'; assert conn['od'] == '5.500'; assert conn['weight'] == '17.00'; assert conn['material_family'] == '13CR'; assert conn['yield_strength'] == '80'; assert conn['type'] == 'PIN'; print('tsh mapper ok')"
     Invoke-Python @("-c", $tshMapperCheck)
 
-    Write-Host "Checking TSH adapter datasheet selection..."
+    Write-Host "Checking TSH adapter datasheet extraction..."
     Invoke-Python @("scripts/check_tsh_adapter.py")
 
     Write-Host "Checking writer behavior..."

@@ -20,6 +20,21 @@ class FakePage:
         self.goto_calls: list[dict[str, Any]] = []
         self.load_states: list[dict[str, Any]] = []
         self.ready_checks: list[dict[str, Any]] = []
+        self.function_checks: list[dict[str, Any]] = []
+        self.body_text = """
+            Product Datasheet
+            Pipe Body Data
+            Geometry
+            Drift 4.767 in
+            Performance
+            Connection Data
+            Performance
+            Joint Yield Strength 561,000 lbf
+            Compression Strength 540,000 lbf
+            Internal Pressure Capacity 12,345 psi
+            External Pressure Capacity 10,987 psi
+            Make-Up Torques
+        """
         self.timeout = None
         self.navigation_timeout = None
 
@@ -41,8 +56,29 @@ class FakePage:
     def wait_for_load_state(self, state: str, timeout: int) -> None:
         self.load_states.append({"state": state, "timeout": timeout})
 
-    def wait_for_function(self, script: str, arg: int, timeout: int) -> None:
-        self.ready_checks.append({"arg": arg, "timeout": timeout})
+    def wait_for_function(
+        self,
+        script: str,
+        arg: int | None = None,
+        timeout: int = 0,
+    ) -> None:
+        if arg is None:
+            self.function_checks.append({"timeout": timeout})
+        else:
+            self.ready_checks.append({"arg": arg, "timeout": timeout})
+
+    def locator(self, selector: str) -> "FakeLocator":
+        if selector == "body":
+            return FakeLocator(text=self.body_text)
+        return FakeLocator()
+
+
+class FakeLocator:
+    def __init__(self, text: str = "") -> None:
+        self.text = text
+
+    def inner_text(self, timeout: int) -> str:
+        return self.text
 
 
 class FakeContext:
@@ -181,11 +217,14 @@ def main() -> None:
         except ValueError:
             pass
 
-        try:
-            adapter.run(build_mapped_data())
-            raise AssertionError("Expected NotImplementedError for TSH automation.")
-        except NotImplementedError as exc:
-            assert str(exc) == "TSH datasheet extraction is not implemented yet."
+        result = adapter.run(build_mapped_data())
+        assert result == {
+            "tensile": "561,000",
+            "compression": "540,000",
+            "burst": "12,345",
+            "collapse": "10,987",
+            "drift": "4.767",
+        }
 
         assert adapter.page.goto_calls == [
             {
@@ -196,6 +235,7 @@ def main() -> None:
         ]
         assert adapter.page.load_states == [{"state": "load", "timeout": 10000}]
         assert adapter.page.ready_checks == [{"arg": 4, "timeout": 20000}]
+        assert adapter.page.function_checks == [{"timeout": 20000}]
         assert adapter.dropdown_selections == [
             {
                 "dropdown_index": 0,
@@ -227,6 +267,15 @@ def main() -> None:
         assert adapter._score_weight_option_datasheet("17.00 LB/FT (16.90, 17.00)", "17.00") == 10000
         assert adapter._score_grade_option("13CR-L80", "13CR 80") is not None
         assert adapter._score_connection_option("TSH WEDGE 523", "WEDGE") is not None
+        assert adapter._extract_first_number_after_label(
+            "Joint Yield Strength 561,000 lbf",
+            "Joint Yield Strength",
+        ) == "561,000"
+
+        no_drift_data = build_mapped_data()
+        no_drift_data["drift_extraction"] = False
+        no_drift_result = adapter.run(no_drift_data)
+        assert no_drift_result["drift"] == "NA"
 
         adapter.open_blanking_page()
         assert adapter.page.goto_calls[-1] == {
