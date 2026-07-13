@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 
 class TshAdapter(BaseAdapter):
-    """Automate TSH datasheet and blanking pages until extraction is complete."""
+    """Automate TSH datasheet and blanking pages."""
 
     NA = "NA"
 
@@ -69,9 +69,10 @@ class TshAdapter(BaseAdapter):
         self._start_browser(playwright_factory)
 
     def run(self, mapped_data: dict[str, Any]) -> dict[str, Any]:
-        """Validate mapped data and extract TSH datasheet values."""
+        """Validate mapped data and extract TSH datasheet and blanking values."""
         self._validate_mapped_data(mapped_data)
         connection = mapped_data["connection"]
+        connection_type = str(connection["type"]).upper()
         drift_extraction = bool(mapped_data.get("drift_extraction"))
 
         self.open_datasheet_page()
@@ -96,9 +97,14 @@ class TshAdapter(BaseAdapter):
         self._select_blanking_weight(connection["weight"])
         self._select_blanking_connection(connection["name"])
 
-        raise NotImplementedError(
-            "TSH blanking extraction is not implemented yet."
-        )
+        self._wait_for_blanking_dimensions_loaded()
+        blanking_result = self._extract_blanking_dimensions(connection_type)
+
+        return {
+            **datasheet_result,
+            **blanking_result,
+            **drift_data,
+        }
 
     def open_datasheet_page(self) -> None:
         self._goto_page(self.datasheet_url)
@@ -888,6 +894,78 @@ class TshAdapter(BaseAdapter):
             f"{geometry_section[:500]}"
         )
 
+    def _wait_for_blanking_dimensions_loaded(self) -> None:
+        self._require_page().wait_for_function(
+            """
+            () => {
+                const txt = document.body.innerText || "";
+                return txt.includes("Blanking Dimensions")
+                    && txt.includes("Selected Product")
+                    && txt.includes("Box")
+                    && txt.includes("Pin")
+                    && txt.includes("Inside Diameter Min")
+                    && txt.includes("Outside Diameter Max");
+            }
+            """,
+            timeout=20000,
+        )
+
+    def _extract_blanking_dimensions(self, connection_type: str) -> dict[str, Any]:
+        body_text = self._require_page().locator("body").inner_text(timeout=5000)
+        normalized = self._normalize_text(body_text)
+
+        if connection_type == "BOX":
+            section_text = self._extract_section(
+                text=normalized,
+                start_label="Box",
+                end_candidates=["Pin"],
+            )
+        elif connection_type == "PIN":
+            section_text = self._extract_section(
+                text=normalized,
+                start_label="Pin",
+                end_candidates=[],
+            )
+        else:
+            raise RuntimeError(f"Unsupported TSH connection type: {connection_type}")
+
+        length_min = self._extract_length_min(section_text)
+        outside_min = self._extract_first_number_after_label(
+            section_text,
+            "Outside Diameter Min",
+        )
+        outside_max = self._extract_first_number_after_label(
+            section_text,
+            "Outside Diameter Max",
+        )
+        inside_min = self._extract_first_number_after_label(
+            section_text,
+            "Inside Diameter Min",
+        )
+        inside_max = self._extract_first_number_after_label(
+            section_text,
+            "Inside Diameter Max",
+        )
+
+        if not outside_min or not outside_max:
+            raise RuntimeError(f"TSH blanking {connection_type} missing Outside Diameter Min/Max")
+
+        if not inside_min or not inside_max:
+            raise RuntimeError(f"TSH blanking {connection_type} missing Inside Diameter Min/Max")
+
+        return {
+            "od": {
+                "min": outside_min,
+                "max": outside_max,
+            },
+            "id": {
+                "min": inside_min,
+                "max": inside_max,
+            },
+            "external_length": length_min,
+            "internal_length": length_min,
+        }
+
     def _extract_section(
         self,
         text: str,
@@ -905,6 +983,19 @@ class TshAdapter(BaseAdapter):
                 end_index = index
 
         return text[start_index:end_index].strip()
+
+    def _extract_length_min(self, section_text: str) -> str | None:
+        value = self._extract_first_number_after_label(section_text, "Length Min")
+
+        if value is None:
+            raise RuntimeError(
+                f"TSH blanking section missing Length Min: {section_text[:500]}"
+            )
+
+        try:
+            return f"{float(value.replace(',', '').strip()):.3f}"
+        except ValueError as exc:
+            raise RuntimeError(f"Invalid TSH Length Min value: {value}") from exc
 
     def _extract_first_number_after_label(self, text: str, label: str) -> str | None:
         pattern = rf"{re.escape(label)}\s+([+\-]?\d+(?:,\d{{3}})*(?:\.\d+)?)"

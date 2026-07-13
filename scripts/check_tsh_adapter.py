@@ -21,7 +21,7 @@ class FakePage:
         self.load_states: list[dict[str, Any]] = []
         self.ready_checks: list[dict[str, Any]] = []
         self.function_checks: list[dict[str, Any]] = []
-        self.body_text = """
+        self.datasheet_text = """
             Product Datasheet
             Pipe Body Data
             Geometry
@@ -35,6 +35,23 @@ class FakePage:
             External Pressure Capacity 10,987 psi
             Make-Up Torques
         """
+        self.blanking_text = """
+            Blanking Dimensions
+            Selected Product
+            Box
+            Length Min 4.875 in
+            Outside Diameter Min 5.901 in
+            Outside Diameter Max 6.125 in
+            Inside Diameter Min 4.601 in
+            Inside Diameter Max 4.812 in
+            Pin
+            Length Min 5.250 in
+            Outside Diameter Min 5.432 in
+            Outside Diameter Max 5.678 in
+            Inside Diameter Min 4.321 in
+            Inside Diameter Max 4.567 in
+        """
+        self.body_text = self.datasheet_text
         self.timeout = None
         self.navigation_timeout = None
 
@@ -52,6 +69,10 @@ class FakePage:
                 "timeout": timeout,
             }
         )
+        if "BlankingDimensions" in url:
+            self.body_text = self.blanking_text
+        else:
+            self.body_text = self.datasheet_text
 
     def wait_for_load_state(self, state: str, timeout: int) -> None:
         self.load_states.append({"state": state, "timeout": timeout})
@@ -222,12 +243,26 @@ def main() -> None:
         except ValueError:
             pass
 
-        try:
-            adapter.run(build_mapped_data())
-            raise AssertionError("Expected NotImplementedError for TSH blanking extraction.")
-        except NotImplementedError as exc:
-            assert str(exc) == "TSH blanking extraction is not implemented yet."
+        result = adapter.run(build_mapped_data())
+        assert result == {
+            "tensile": "561,000",
+            "compression": "540,000",
+            "burst": "12,345",
+            "collapse": "10,987",
+            "od": {
+                "min": "5.432",
+                "max": "5.678",
+            },
+            "id": {
+                "min": "4.321",
+                "max": "4.567",
+            },
+            "external_length": "5.250",
+            "internal_length": "5.250",
+            "drift": "4.767",
+        }
 
+        adapter.page.body_text = adapter.page.datasheet_text
         assert adapter._extract_connection_performance() == {
             "tensile": "561,000",
             "compression": "540,000",
@@ -256,7 +291,10 @@ def main() -> None:
             {"arg": 4, "timeout": 20000},
             {"arg": 3, "timeout": 20000},
         ]
-        assert adapter.page.function_checks == [{"timeout": 20000}]
+        assert adapter.page.function_checks == [
+            {"timeout": 20000},
+            {"timeout": 20000},
+        ]
         assert adapter.dropdown_selections == [
             {
                 "dropdown_index": 0,
@@ -311,15 +349,26 @@ def main() -> None:
             "Joint Yield Strength 561,000 lbf",
             "Joint Yield Strength",
         ) == "561,000"
+        adapter.page.body_text = adapter.page.blanking_text
+        assert adapter._extract_blanking_dimensions("BOX") == {
+            "od": {
+                "min": "5.901",
+                "max": "6.125",
+            },
+            "id": {
+                "min": "4.601",
+                "max": "4.812",
+            },
+            "external_length": "4.875",
+            "internal_length": "4.875",
+        }
+        assert adapter._extract_length_min("Length Min 1,234.5 in") == "1234.500"
 
         drift_calls_after_first_run = adapter.drift_extract_calls
         no_drift_data = build_mapped_data()
         no_drift_data["drift_extraction"] = False
-        try:
-            adapter.run(no_drift_data)
-            raise AssertionError("Expected NotImplementedError for TSH blanking extraction.")
-        except NotImplementedError as exc:
-            assert str(exc) == "TSH blanking extraction is not implemented yet."
+        no_drift_result = adapter.run(no_drift_data)
+        assert no_drift_result["drift"] == "NA"
         assert adapter.drift_extract_calls == drift_calls_after_first_run
 
         adapter.open_blanking_page()
