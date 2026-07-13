@@ -39,7 +39,7 @@ Not implemented yet:
 ```text
 CustomTkinter UI
 Other partner adapters
-Real TSH blanking dropdown selection and extraction
+Real TSH blanking extraction
 PyInstaller packaging
 ```
 
@@ -71,7 +71,7 @@ src/adapters/base_adapter.py
     Shared interface for partner website adapters.
 
 src/adapters/tsh_adapter.py
-    TSH adapter with mapped-data validation, Playwright browser lifecycle management, datasheet/blanking page navigation, datasheet dropdown selection, and datasheet extraction.
+    TSH adapter with mapped-data validation, Playwright browser lifecycle management, datasheet/blanking page navigation, datasheet extraction, and blanking dropdown selection.
 
 src/adapters/vam_adapter.py
     VAM adapter with mapped-data validation, Playwright browser lifecycle management, configurator navigation, filter selection, connection selection, CDS opening, and data extraction.
@@ -80,7 +80,7 @@ scripts/check_vam_adapter.py
     Smoke check for VAM adapter lifecycle, navigation, filter orchestration, connection selection orchestration, CDS opening orchestration, data extraction return flow, and parsing helpers.
 
 scripts/check_tsh_adapter.py
-    Smoke check for TSH adapter browser lifecycle, navigation, datasheet dropdown selection, datasheet extraction, and mapped-data validation.
+    Smoke check for TSH adapter browser lifecycle, navigation, datasheet extraction, blanking dropdown selection, mapped-data validation, and explicit blanking-extraction stop.
 
 scripts/check_service_vam_flow.py
     Smoke check for VAM mapper and adapter integration inside TemplateGenerationService.
@@ -173,7 +173,7 @@ Router behavior smoke check
 VAM mapper behavior smoke check
 VAM adapter data extraction smoke check
 TSH mapper behavior smoke check
-TSH adapter datasheet extraction smoke check
+TSH adapter blanking selection smoke check
 Writer behavior smoke check
 Service flow smoke check
 Service VAM adapter flow smoke check

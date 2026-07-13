@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 
 class TshAdapter(BaseAdapter):
-    """Automate the TSH datasheet page until extraction is implemented."""
+    """Automate TSH datasheet and blanking pages until extraction is complete."""
 
     NA = "NA"
 
@@ -90,10 +90,15 @@ class TshAdapter(BaseAdapter):
             drift_data = {"drift": self._extract_drift_size()}
 
         datasheet_result = self._extract_connection_performance()
-        return {
-            **datasheet_result,
-            **drift_data,
-        }
+
+        self.open_blanking_page()
+        self._select_blanking_od(connection["od"])
+        self._select_blanking_weight(connection["weight"])
+        self._select_blanking_connection(connection["name"])
+
+        raise NotImplementedError(
+            "TSH blanking extraction is not implemented yet."
+        )
 
     def open_datasheet_page(self) -> None:
         self._goto_page(self.datasheet_url)
@@ -246,6 +251,31 @@ class TshAdapter(BaseAdapter):
     def _select_connection(self, connection_target: str) -> None:
         self._select_dropdown_by_search(
             dropdown_index=3,
+            search_text=connection_target,
+            match_mode="connection",
+            target_value=connection_target,
+        )
+
+    def _select_blanking_od(self, od_value: str) -> None:
+        self._select_dropdown_by_search(
+            dropdown_index=0,
+            search_text=od_value,
+            match_mode="exact_or_numeric",
+            target_value=od_value,
+        )
+
+    def _select_blanking_weight(self, weight_value: str) -> None:
+        search_text = self._strip_trailing_zero_for_search(weight_value)
+        self._select_dropdown_by_search(
+            dropdown_index=1,
+            search_text=search_text,
+            match_mode="weight_blanking",
+            target_value=weight_value,
+        )
+
+    def _select_blanking_connection(self, connection_target: str) -> None:
+        self._select_dropdown_by_search(
+            dropdown_index=2,
             search_text=connection_target,
             match_mode="connection",
             target_value=connection_target,
@@ -570,6 +600,9 @@ class TshAdapter(BaseAdapter):
         if match_mode == "weight_datasheet":
             return self._score_weight_option_datasheet(option_text, target_value)
 
+        if match_mode == "weight_blanking":
+            return self._score_weight_option_blanking(option_text, target_value)
+
         if match_mode == "grade":
             return self._score_grade_option(option_text, target_value)
 
@@ -634,6 +667,30 @@ class TshAdapter(BaseAdapter):
                     return 10000
 
         if str(target_weight).strip() in option_clean:
+            return 7000 - len(option_clean)
+
+        return None
+
+    def _score_weight_option_blanking(
+        self,
+        option_text: str,
+        target_weight: str,
+    ) -> int | None:
+        target_num = self._safe_float(target_weight)
+
+        if target_num is None:
+            return self._score_contains_option(option_text, target_weight)
+
+        option_clean = self._normalize_dropdown_option_text(option_text)
+
+        paren_match = re.search(r"\((.*?)\)", option_clean)
+        if paren_match:
+            token = paren_match.group(1).strip()
+            token_num = self._safe_float(token)
+            if token_num is not None and token_num == target_num:
+                return 10000
+
+        if self._strip_trailing_zero_for_search(target_weight) in option_clean:
             return 7000 - len(option_clean)
 
         return None
@@ -736,6 +793,12 @@ class TshAdapter(BaseAdapter):
 
     def _extract_number_tokens(self, normalized_text: str) -> list[str]:
         return re.findall(r"\d+(?:\.\d+)?", normalized_text)
+
+    def _strip_trailing_zero_for_search(self, value: str) -> str:
+        try:
+            return str(float(value)).rstrip("0").rstrip(".")
+        except ValueError:
+            return value.strip()
 
     def _safe_float(self, value: str) -> float | None:
         if value is None:

@@ -132,6 +132,7 @@ class FakePlaywright:
 class RecordingTshAdapter(TshAdapter):
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         self.dropdown_selections: list[dict[str, Any]] = []
+        self.drift_extract_calls = 0
         super().__init__(*args, **kwargs)
 
     def _select_dropdown_by_search(
@@ -149,6 +150,10 @@ class RecordingTshAdapter(TshAdapter):
                 "target_value": target_value,
             }
         )
+
+    def _extract_drift_size(self) -> str | None:
+        self.drift_extract_calls += 1
+        return super()._extract_drift_size()
 
 
 def build_mapped_data() -> dict[str, Any]:
@@ -217,24 +222,40 @@ def main() -> None:
         except ValueError:
             pass
 
-        result = adapter.run(build_mapped_data())
-        assert result == {
+        try:
+            adapter.run(build_mapped_data())
+            raise AssertionError("Expected NotImplementedError for TSH blanking extraction.")
+        except NotImplementedError as exc:
+            assert str(exc) == "TSH blanking extraction is not implemented yet."
+
+        assert adapter._extract_connection_performance() == {
             "tensile": "561,000",
             "compression": "540,000",
             "burst": "12,345",
             "collapse": "10,987",
-            "drift": "4.767",
         }
+        assert adapter._extract_drift_size() == "4.767"
 
         assert adapter.page.goto_calls == [
             {
                 "url": "https://dcp.tenaris.com/Product_Datasheet",
                 "wait_until": "domcontentloaded",
                 "timeout": 5678,
-            }
+            },
+            {
+                "url": "https://dcp.tenaris.com/BlankingDimensions",
+                "wait_until": "domcontentloaded",
+                "timeout": 5678,
+            },
         ]
-        assert adapter.page.load_states == [{"state": "load", "timeout": 10000}]
-        assert adapter.page.ready_checks == [{"arg": 4, "timeout": 20000}]
+        assert adapter.page.load_states == [
+            {"state": "load", "timeout": 10000},
+            {"state": "load", "timeout": 10000},
+        ]
+        assert adapter.page.ready_checks == [
+            {"arg": 4, "timeout": 20000},
+            {"arg": 3, "timeout": 20000},
+        ]
         assert adapter.page.function_checks == [{"timeout": 20000}]
         assert adapter.dropdown_selections == [
             {
@@ -261,10 +282,29 @@ def main() -> None:
                 "match_mode": "connection",
                 "target_value": "WEDGE",
             },
+            {
+                "dropdown_index": 0,
+                "search_text": "5.500",
+                "match_mode": "exact_or_numeric",
+                "target_value": "5.500",
+            },
+            {
+                "dropdown_index": 1,
+                "search_text": "17",
+                "match_mode": "weight_blanking",
+                "target_value": "17.00",
+            },
+            {
+                "dropdown_index": 2,
+                "search_text": "WEDGE",
+                "match_mode": "connection",
+                "target_value": "WEDGE",
+            },
         ]
 
         assert adapter._score_exact_or_numeric_option("5.5", "5.500") == 9000
         assert adapter._score_weight_option_datasheet("17.00 LB/FT (16.90, 17.00)", "17.00") == 10000
+        assert adapter._score_weight_option_blanking("17.00 LB/FT (17)", "17.00") == 10000
         assert adapter._score_grade_option("13CR-L80", "13CR 80") is not None
         assert adapter._score_connection_option("TSH WEDGE 523", "WEDGE") is not None
         assert adapter._extract_first_number_after_label(
@@ -272,10 +312,15 @@ def main() -> None:
             "Joint Yield Strength",
         ) == "561,000"
 
+        drift_calls_after_first_run = adapter.drift_extract_calls
         no_drift_data = build_mapped_data()
         no_drift_data["drift_extraction"] = False
-        no_drift_result = adapter.run(no_drift_data)
-        assert no_drift_result["drift"] == "NA"
+        try:
+            adapter.run(no_drift_data)
+            raise AssertionError("Expected NotImplementedError for TSH blanking extraction.")
+        except NotImplementedError as exc:
+            assert str(exc) == "TSH blanking extraction is not implemented yet."
+        assert adapter.drift_extract_calls == drift_calls_after_first_run
 
         adapter.open_blanking_page()
         assert adapter.page.goto_calls[-1] == {
