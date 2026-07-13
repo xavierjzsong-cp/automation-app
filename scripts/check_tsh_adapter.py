@@ -93,6 +93,28 @@ class FakePlaywright:
         self.stopped = True
 
 
+class RecordingTshAdapter(TshAdapter):
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        self.dropdown_selections: list[dict[str, Any]] = []
+        super().__init__(*args, **kwargs)
+
+    def _select_dropdown_by_search(
+        self,
+        dropdown_index: int,
+        search_text: str,
+        match_mode: str,
+        target_value: str | None = None,
+    ) -> None:
+        self.dropdown_selections.append(
+            {
+                "dropdown_index": dropdown_index,
+                "search_text": search_text,
+                "match_mode": match_mode,
+                "target_value": target_value,
+            }
+        )
+
+
 def build_mapped_data() -> dict[str, Any]:
     return {
         "partner": "TSH",
@@ -112,7 +134,7 @@ def build_mapped_data() -> dict[str, Any]:
 def main() -> None:
     tmp = TemporaryDirectory()
     fake_playwright = FakePlaywright()
-    adapter = TshAdapter(
+    adapter = RecordingTshAdapter(
         base_url="https://dcp.tenaris.com/en",
         datasheet_url="https://dcp.tenaris.com/Product_Datasheet",
         blanking_url="https://dcp.tenaris.com/BlankingDimensions",
@@ -163,7 +185,7 @@ def main() -> None:
             adapter.run(build_mapped_data())
             raise AssertionError("Expected NotImplementedError for TSH automation.")
         except NotImplementedError as exc:
-            assert str(exc) == "TSH datasheet selection is not implemented yet."
+            assert str(exc) == "TSH datasheet extraction is not implemented yet."
 
         assert adapter.page.goto_calls == [
             {
@@ -174,6 +196,37 @@ def main() -> None:
         ]
         assert adapter.page.load_states == [{"state": "load", "timeout": 10000}]
         assert adapter.page.ready_checks == [{"arg": 4, "timeout": 20000}]
+        assert adapter.dropdown_selections == [
+            {
+                "dropdown_index": 0,
+                "search_text": "5.500",
+                "match_mode": "exact_or_numeric",
+                "target_value": "5.500",
+            },
+            {
+                "dropdown_index": 1,
+                "search_text": "17.00",
+                "match_mode": "weight_datasheet",
+                "target_value": "17.00",
+            },
+            {
+                "dropdown_index": 2,
+                "search_text": "13CR 80",
+                "match_mode": "grade",
+                "target_value": "13CR 80",
+            },
+            {
+                "dropdown_index": 3,
+                "search_text": "WEDGE",
+                "match_mode": "connection",
+                "target_value": "WEDGE",
+            },
+        ]
+
+        assert adapter._score_exact_or_numeric_option("5.5", "5.500") == 9000
+        assert adapter._score_weight_option_datasheet("17.00 LB/FT (16.90, 17.00)", "17.00") == 10000
+        assert adapter._score_grade_option("13CR-L80", "13CR 80") is not None
+        assert adapter._score_connection_option("TSH WEDGE 523", "WEDGE") is not None
 
         adapter.open_blanking_page()
         assert adapter.page.goto_calls[-1] == {

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -23,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 
 class TshAdapter(BaseAdapter):
-    """Validate TSH mapped data before Playwright automation is implemented."""
+    """Automate the TSH datasheet page until extraction is implemented."""
 
     REQUIRED_CONNECTION_FIELDS = {
         "name",
@@ -66,11 +67,21 @@ class TshAdapter(BaseAdapter):
         self._start_browser(playwright_factory)
 
     def run(self, mapped_data: dict[str, Any]) -> dict[str, Any]:
-        """Validate mapped data and open the TSH datasheet page."""
+        """Validate mapped data and select the TSH datasheet dropdowns."""
         self._validate_mapped_data(mapped_data)
+        connection = mapped_data["connection"]
+
         self.open_datasheet_page()
+        self._select_od(connection["od"])
+        self._select_weight(connection["weight"])
+        self._select_grade(
+            material_family=connection["material_family"],
+            yield_strength=connection["yield_strength"],
+        )
+        self._select_connection(connection["name"])
+
         raise NotImplementedError(
-            "TSH datasheet selection is not implemented yet."
+            "TSH datasheet extraction is not implemented yet."
         )
 
     def open_datasheet_page(self) -> None:
@@ -191,6 +202,535 @@ class TshAdapter(BaseAdapter):
             arg=expected_count,
             timeout=20000,
         )
+
+    def _select_od(self, od_value: str) -> None:
+        self._select_dropdown_by_search(
+            dropdown_index=0,
+            search_text=od_value,
+            match_mode="exact_or_numeric",
+            target_value=od_value,
+        )
+
+    def _select_weight(self, weight_value: str) -> None:
+        self._select_dropdown_by_search(
+            dropdown_index=1,
+            search_text=weight_value,
+            match_mode="weight_datasheet",
+            target_value=weight_value,
+        )
+
+    def _select_grade(
+        self,
+        material_family: str,
+        yield_strength: str,
+    ) -> None:
+        grade_value = f"{material_family} {yield_strength}".strip()
+        self._select_dropdown_by_search(
+            dropdown_index=2,
+            search_text=grade_value,
+            match_mode="grade",
+            target_value=grade_value,
+        )
+
+    def _select_connection(self, connection_target: str) -> None:
+        self._select_dropdown_by_search(
+            dropdown_index=3,
+            search_text=connection_target,
+            match_mode="connection",
+            target_value=connection_target,
+        )
+
+    def _select_dropdown_by_search(
+        self,
+        dropdown_index: int,
+        search_text: str,
+        match_mode: str,
+        target_value: str | None = None,
+    ) -> None:
+        page = self._require_page()
+        root = self._get_dropdown_root(dropdown_index)
+
+        self._open_select2_dropdown(root)
+
+        search_input = self._get_visible_select2_search_input()
+        search_input.click(force=True)
+        search_input.fill(search_text)
+        page.wait_for_timeout(700)
+
+        option = self._find_visible_select2_option(
+            target_value=target_value or search_text,
+            match_mode=match_mode,
+        )
+
+        if option is None:
+            visible_options = self._get_visible_select2_option_texts()
+            hidden_options = self._get_dropdown_option_texts(dropdown_index)
+            raise RuntimeError(
+                f"Could not find TSH dropdown option. "
+                f"dropdown_index={dropdown_index}, search_text=[{search_text}], "
+                f"target_value=[{target_value}], match_mode=[{match_mode}], "
+                f"visible_options={visible_options}, hidden_options={hidden_options}"
+            )
+
+        option.scroll_into_view_if_needed()
+        option.click(force=True)
+        page.wait_for_timeout(1200)
+
+        try:
+            page.wait_for_load_state("networkidle", timeout=5000)
+        except Exception:
+            pass
+
+    def _open_select2_dropdown(self, root: Any) -> None:
+        page = self._require_page()
+
+        try:
+            page.keyboard.press("Escape")
+            page.wait_for_timeout(300)
+        except Exception:
+            pass
+
+        trigger_candidates = [
+            root.locator(".select2-selection").first,
+            root.locator(".select2-selection__rendered").first,
+            root.locator(".select2-selection__arrow").first,
+            root.locator("[role='combobox']").first,
+            root.locator(".dropdownicon").first,
+            root.locator(".select2-container").first,
+            root,
+        ]
+
+        last_error: Exception | None = None
+
+        for trigger in trigger_candidates:
+            try:
+                if not trigger.is_visible(timeout=1000):
+                    continue
+
+                trigger.scroll_into_view_if_needed()
+                page.wait_for_timeout(300)
+
+                try:
+                    trigger.click(timeout=2000)
+                except Exception:
+                    trigger.click(force=True, timeout=2000)
+
+                if self._wait_for_select2_dropdown_opened(timeout_ms=3000):
+                    return
+            except Exception as exc:
+                last_error = exc
+                continue
+
+        try:
+            handle = root.element_handle()
+            if handle:
+                handle.evaluate(
+                    """
+                    (root) => {
+                        const targets = [
+                            root.querySelector(".select2-selection"),
+                            root.querySelector(".select2-selection__rendered"),
+                            root.querySelector(".select2-selection__arrow"),
+                            root.querySelector("[role='combobox']"),
+                            root.querySelector(".dropdownicon"),
+                            root.querySelector(".select2-container"),
+                            root
+                        ].filter(Boolean);
+
+                        for (const target of targets) {
+                            target.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+                            target.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+                            target.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+                        }
+                    }
+                    """
+                )
+
+                if self._wait_for_select2_dropdown_opened(timeout_ms=3000):
+                    return
+        except Exception as exc:
+            last_error = exc
+
+        raise RuntimeError("TSH Select2 dropdown did not enter open state.") from last_error
+
+    def _wait_for_select2_dropdown_opened(self, timeout_ms: int = 3000) -> bool:
+        page = self._require_page()
+        selectors = [
+            ".select2-container--open input.select2-search__field",
+            ".select2-container--open input[role='searchbox']",
+            ".select2-dropdown input.select2-search__field",
+            ".select2-dropdown input[role='searchbox']",
+            ".select2-results__option[role='option']",
+            "li.select2-results__option",
+        ]
+
+        elapsed = 0
+        interval = 200
+
+        while elapsed < timeout_ms:
+            for selector in selectors:
+                try:
+                    locator = page.locator(selector).first
+                    if locator.is_visible(timeout=200):
+                        return True
+                except Exception:
+                    continue
+
+            page.wait_for_timeout(interval)
+            elapsed += interval
+
+        return False
+
+    def _get_visible_select2_search_input(self) -> Any:
+        page = self._require_page()
+        candidates = [
+            page.locator(".select2-container--open input.select2-search__field").first,
+            page.locator(".select2-container--open input[role='searchbox']").first,
+            page.locator(".select2-dropdown input.select2-search__field").first,
+            page.locator(".select2-dropdown input[role='searchbox']").first,
+            page.locator("input.select2-search__field").first,
+            page.locator("input[role='searchbox']").first,
+        ]
+
+        for candidate in candidates:
+            try:
+                if candidate.is_visible(timeout=3000):
+                    return candidate
+            except Exception:
+                continue
+
+        raise RuntimeError("Could not locate visible Select2 search input.")
+
+    def _find_visible_select2_option(
+        self,
+        target_value: str,
+        match_mode: str,
+    ) -> Any | None:
+        options = self._require_page().locator(
+            ".select2-container--open .select2-results__option[role='option'], "
+            ".select2-results__option[role='option'], "
+            "li.select2-results__option, "
+            "[role='option']"
+        )
+
+        best_option = None
+        best_score = None
+
+        try:
+            count = options.count()
+        except Exception:
+            count = 0
+
+        for index in range(count):
+            try:
+                option = options.nth(index)
+
+                if not option.is_visible(timeout=500):
+                    continue
+
+                if option.get_attribute("aria-disabled") == "true":
+                    continue
+
+                option_text = (option.text_content(timeout=1000) or "").strip()
+                if not option_text:
+                    continue
+
+                score = self._score_visible_option(
+                    option_text=option_text,
+                    target_value=target_value,
+                    match_mode=match_mode,
+                )
+
+                if score is None:
+                    continue
+
+                if best_score is None or score > best_score:
+                    best_score = score
+                    best_option = option
+            except Exception:
+                continue
+
+        return best_option
+
+    def _get_visible_select2_option_texts(self) -> list[str]:
+        options = self._require_page().locator(
+            ".select2-container--open .select2-results__option[role='option'], "
+            ".select2-results__option[role='option'], "
+            "li.select2-results__option, "
+            "[role='option']"
+        )
+
+        texts: list[str] = []
+
+        try:
+            count = options.count()
+        except Exception:
+            return texts
+
+        for index in range(count):
+            try:
+                option = options.nth(index)
+                if option.is_visible(timeout=300):
+                    text = (option.text_content(timeout=500) or "").strip()
+                    if text:
+                        texts.append(text)
+            except Exception:
+                continue
+
+        return texts
+
+    def _get_dropdown_roots(self) -> Any:
+        page = self._require_page()
+        return page.locator(
+            "div.select-search div.drop-downs-container "
+            "div.select-dropdown[data-component='dropdown']"
+        ).filter(has=page.locator("option.dropdown-option"))
+
+    def _is_dropdown_root_interactable(self, root: Any) -> bool:
+        trigger_candidates = [
+            root.locator(".select2-selection").first,
+            root.locator(".select2-selection__rendered").first,
+            root.locator("[role='combobox']").first,
+            root.locator(".dropdownicon").first,
+            root,
+        ]
+
+        for trigger in trigger_candidates:
+            try:
+                if trigger.is_visible(timeout=500):
+                    return True
+            except Exception:
+                continue
+
+        return False
+
+    def _get_dropdown_root(self, dropdown_index: int) -> Any:
+        roots = self._get_dropdown_roots()
+
+        try:
+            raw_count = roots.count()
+        except Exception:
+            raw_count = 0
+
+        visible_index = 0
+
+        for raw_index in range(raw_count):
+            root = roots.nth(raw_index)
+
+            if not self._is_dropdown_root_interactable(root):
+                continue
+
+            if visible_index == dropdown_index:
+                return root
+
+            visible_index += 1
+
+        raise RuntimeError(
+            f"TSH dropdown root index {dropdown_index} not found. "
+            f"raw_count={raw_count}, interactable_count={visible_index}"
+        )
+
+    def _get_dropdown_option_texts(self, dropdown_index: int) -> list[str]:
+        root = self._get_dropdown_root(dropdown_index)
+        options = root.locator("option.dropdown-option")
+
+        texts: list[str] = []
+        option_count = options.count()
+
+        for index in range(option_count):
+            text = (options.nth(index).text_content(timeout=1000) or "").strip()
+            if text:
+                texts.append(text)
+
+        return texts
+
+    def _score_visible_option(
+        self,
+        option_text: str,
+        target_value: str,
+        match_mode: str,
+    ) -> int | None:
+        if match_mode == "exact_or_numeric":
+            return self._score_exact_or_numeric_option(option_text, target_value)
+
+        if match_mode == "contains":
+            return self._score_contains_option(option_text, target_value)
+
+        if match_mode == "weight_datasheet":
+            return self._score_weight_option_datasheet(option_text, target_value)
+
+        if match_mode == "grade":
+            return self._score_grade_option(option_text, target_value)
+
+        if match_mode == "connection":
+            return self._score_connection_option(option_text, target_value)
+
+        return self._score_contains_option(option_text, target_value)
+
+    def _score_exact_or_numeric_option(
+        self,
+        option_text: str,
+        target_value: str,
+    ) -> int | None:
+        option_clean = self._normalize_dropdown_option_text(option_text)
+        target_clean = self._normalize_dropdown_option_text(target_value)
+
+        if option_clean == target_clean:
+            return 10000
+
+        try:
+            if float(option_clean) == float(target_clean):
+                return 9000
+        except ValueError:
+            pass
+
+        return None
+
+    def _score_contains_option(
+        self,
+        option_text: str,
+        target_value: str,
+    ) -> int | None:
+        option_clean = self._normalize_dropdown_option_text(option_text).upper()
+        target_clean = self._normalize_dropdown_option_text(target_value).upper()
+
+        if option_clean == target_clean:
+            return 10000
+
+        if target_clean in option_clean:
+            return 8000 - len(option_clean)
+
+        return None
+
+    def _score_weight_option_datasheet(
+        self,
+        option_text: str,
+        target_weight: str,
+    ) -> int | None:
+        target_num = self._safe_float(target_weight)
+
+        if target_num is None:
+            return self._score_contains_option(option_text, target_weight)
+
+        option_clean = self._normalize_dropdown_option_text(option_text)
+
+        paren_match = re.search(r"\((.*?)\)", option_clean)
+        if paren_match:
+            raw_tokens = [token.strip() for token in paren_match.group(1).split(",")]
+            for token in raw_tokens:
+                token_num = self._safe_float(token)
+                if token_num is not None and token_num == target_num:
+                    return 10000
+
+        if str(target_weight).strip() in option_clean:
+            return 7000 - len(option_clean)
+
+        return None
+
+    def _score_grade_option(self, option_text: str, target_value: str) -> int | None:
+        option_clean = self._normalize_dropdown_option_text(option_text).upper()
+        target_clean = self._normalize_dropdown_option_text(target_value).upper()
+
+        if not option_clean or not target_clean:
+            return None
+
+        if option_clean == target_clean:
+            return 10000
+
+        target_tokens = re.findall(r"[A-Z0-9.]+", target_clean)
+
+        if len(target_tokens) < 2:
+            return self._score_contains_option(option_text, target_value)
+
+        material_family = target_tokens[0]
+        yield_strength = target_tokens[1]
+
+        material_family_matched = material_family in option_clean
+        yield_strength_matched = bool(
+            re.search(rf"(^|[^0-9]){re.escape(yield_strength)}([^0-9]|$)", option_clean)
+            or re.search(rf"\bL{re.escape(yield_strength)}\b", option_clean)
+        )
+
+        if material_family_matched and yield_strength_matched:
+            return 10000 - len(option_clean)
+
+        if material_family_matched:
+            return 4000 - len(option_clean)
+
+        return None
+
+    def _score_connection_option(self, option_text: str, target_value: str) -> int | None:
+        normalized_target = self._normalize_connection_text(target_value)
+        normalized_option = self._normalize_connection_text(option_text)
+
+        if not normalized_target or not normalized_option:
+            return None
+
+        if normalized_option == normalized_target:
+            return 100000
+
+        target_tokens = self._tokenize_connection(normalized_target)
+        option_tokens = self._tokenize_connection(normalized_option)
+
+        target_token_set = set(target_tokens)
+        option_token_set = set(option_tokens)
+
+        if not target_token_set.issubset(option_token_set):
+            return None
+
+        target_numbers = self._extract_number_tokens(normalized_target)
+        option_numbers = self._extract_number_tokens(normalized_option)
+
+        score = 50000
+
+        if target_numbers:
+            if option_numbers == target_numbers:
+                score += 30000
+            elif set(target_numbers).issubset(set(option_numbers)):
+                score += 15000
+            else:
+                return None
+
+        if normalized_option.startswith(normalized_target):
+            score += 5000
+
+        extra_tokens = len(option_tokens) - len(target_tokens)
+        score -= extra_tokens * 500
+        score -= len(normalized_option)
+
+        return score
+
+    def _normalize_dropdown_option_text(self, text: str | None) -> str:
+        if not text:
+            return ""
+
+        text = text.replace("\u00a0", " ")
+        text = re.sub(r"\s+", " ", text)
+        return text.strip()
+
+    def _normalize_connection_text(self, text: str | None) -> str:
+        if not text:
+            return ""
+
+        normalized = text.upper().strip()
+        normalized = re.sub(r"^\s*TSH\s+", "", normalized)
+        normalized = normalized.replace("\u00c2\u00ae", " ")
+        normalized = normalized.replace("\u00e2\u201e\u00a2", " ")
+        normalized = re.sub(r"[-_/]", " ", normalized)
+        normalized = re.sub(r"\s+", " ", normalized).strip()
+        return normalized
+
+    def _tokenize_connection(self, normalized_text: str) -> list[str]:
+        return re.findall(r"[A-Z0-9.]+", normalized_text)
+
+    def _extract_number_tokens(self, normalized_text: str) -> list[str]:
+        return re.findall(r"\d+(?:\.\d+)?", normalized_text)
+
+    def _safe_float(self, value: str) -> float | None:
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
 
     def _require_page(self) -> Page:
         if self.page is None:
