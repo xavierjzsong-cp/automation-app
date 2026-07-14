@@ -46,7 +46,7 @@ try {
     Invoke-Python @("-m", "compileall", "-q", "run_ui.py", "src")
 
     Write-Host "Checking core imports..."
-    Invoke-Python @("-c", "from src.services.template_generation_service import GenerationRequest, GenerationResult, TemplateGenerationService; from src.parsers.pots_doc_parser import PotsDocParser; from src.routers.partner_router import PartnerRouter; from src.mappers.jfe_mapper import JfeMapper; from src.mappers.tsh_mapper import TshMapper; from src.mappers.vam_mapper import VamMapper; from src.adapters.tsh_adapter import TshAdapter; from src.adapters.vam_adapter import VamAdapter; from src.writers.template_writer import TemplateWriter; from src.utils.app_paths import resource_path, get_ui_settings_path; print(resource_path('config/partners.yml')); print(get_ui_settings_path()); print('ok')")
+    Invoke-Python @("-c", "from src.services.template_generation_service import GenerationRequest, GenerationResult, TemplateGenerationService; from src.parsers.pots_doc_parser import PotsDocParser; from src.routers.partner_router import PartnerRouter; from src.mappers.jfe_mapper import JfeMapper; from src.mappers.tsh_mapper import TshMapper; from src.mappers.vam_mapper import VamMapper; from src.adapters.jfe_adapter import JfeAdapter; from src.adapters.tsh_adapter import TshAdapter; from src.adapters.vam_adapter import VamAdapter; from src.writers.template_writer import TemplateWriter; from src.utils.app_paths import resource_path, get_ui_settings_path; print(resource_path('config/partners.yml')); print(get_ui_settings_path()); print('ok')")
 
     Write-Host "Checking YAML configuration..."
     $yamlCheck = "import yaml; from pathlib import Path; partners=yaml.safe_load(Path('config/partners.yml').read_text(encoding='utf-8')); fields=yaml.safe_load(Path('config/field_mapping.yml').read_text(encoding='utf-8')); assert set(partners['partners']) == {'VAM', 'TSH', 'JFE', 'HT'}; assert partners['partners']['VAM']['urls']['homepage']; assert partners['partners']['VAM']['urls']['connection_datasheet']; assert partners['partners']['TSH']['urls']['homepage']; assert partners['partners']['TSH']['urls']['connection_datasheet']; assert partners['partners']['TSH']['urls']['blanking_dimensions']; assert {'od', 'wt', 'grade'} <= set(fields['fields']); print('yaml ok')"
@@ -73,6 +73,9 @@ try {
 
     Write-Host "Checking JFE mapper behavior..."
     Invoke-Python @("scripts/check_jfe_mapper.py")
+
+    Write-Host "Checking JFE adapter interface..."
+    Invoke-Python @("scripts/check_jfe_adapter.py")
 
     Write-Host "Checking TSH adapter blanking extraction..."
     Invoke-Python @("scripts/check_tsh_adapter.py")
