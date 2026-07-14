@@ -89,7 +89,7 @@ scripts/check_service_tsh_flow.py
     Smoke check for TSH mapper and adapter integration inside TemplateGenerationService.
 
 src/writers/template_writer.py
-    Excel writer that fills parser-derived fields into a selected sheet.
+    Excel writer that fills parser-derived and adapter-derived fields into a selected sheet.
 
 config/partners.yml
     Minimal partner configuration for VAM, TSH, JFE, and HT.

@@ -146,6 +146,23 @@ def main() -> None:
     assert sheet["B6"].value == "ABC-001"
     assert sheet["B28"].value == "5.5 - 17# VAM TOP BOX"
     assert sheet["B30"].value == "5.5 - 17# TSH W PIN"
+    assert sheet["B13"].value == "5.510"
+    assert sheet["B14"].value == "4.882"
+    assert sheet["B15"].value == "120.125"
+    assert sheet["B22"].value == "1000K"
+    assert sheet["B23"].value == "900K"
+    assert sheet["B24"].value == "800"
+    assert sheet["B25"].value == "700"
+    assert sheet["B33"].value == "4.767 +.020/-.000"
+    assert sheet["B35"].value == "NA"
+    assert sheet["B36"].value == "NA"
+    assert sheet["B37"].value == "NA"
+    assert sheet["H13"].value == "5.500 +.010 /-.010"
+    assert sheet["H14"].value == "4.892 +.010 /-.010"
+    assert sheet["H15"].value == "7.250 +.125/ -.000"
+    assert sheet["H16"].value == 30
+    assert sheet["H17"].value == "6.125 +.125/ -.000"
+    assert sheet["H18"].value == 30
     workbook.close()
     tmp.cleanup()
 
