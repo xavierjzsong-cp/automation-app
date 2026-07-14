@@ -10,6 +10,7 @@ import yaml
 
 from src.adapters.tsh_adapter import TshAdapter
 from src.adapters.vam_adapter import VamAdapter
+from src.mappers.jfe_mapper import JfeMapper
 from src.mappers.tsh_mapper import TshMapper
 from src.mappers.vam_mapper import VamMapper
 from src.parsers.pots_doc_parser import ParsedPotsDocument, PotsDocParser
@@ -73,6 +74,7 @@ class TemplateGenerationService:
         self.router = router or PartnerRouter()
         self.writer = writer or TemplateWriter()
         self.mapper_registry = mapper_registry or {
+            "JFE": JfeMapper(),
             "VAM": VamMapper(),
             "TSH": TshMapper(),
         }
