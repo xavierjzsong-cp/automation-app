@@ -24,7 +24,9 @@ logger = logging.getLogger(__name__)
 
 
 class JfeAdapter(BaseAdapter):
-    """Automate JFE datasheet selection until extraction is implemented."""
+    """Automate JFE datasheet selection and extraction."""
+
+    NA = "NA"
 
     REQUIRED_CONNECTION_FIELDS = {
         "name",
@@ -71,14 +73,13 @@ class JfeAdapter(BaseAdapter):
         self._start_browser(playwright_factory)
 
     def run(self, mapped_data: dict[str, Any]) -> dict[str, Any]:
-        """Validate mapped data and select the JFE datasheet dropdowns."""
+        """Validate mapped data and extract JFE datasheet values."""
         self._validate_mapped_data(mapped_data)
         self.open_datasheet_page()
         self._wait_for_datasheet_page_loaded()
         self._select_datasheet_options(mapped_data)
-        raise NotImplementedError(
-            "JFE datasheet extraction is not implemented yet."
-        )
+        self._wait_for_datasheet_result_loaded()
+        return self.extract_required_data(mapped_data=mapped_data)
 
     def open_datasheet_page(self) -> None:
         """Open the JFE connection datasheet page."""
@@ -241,6 +242,25 @@ class JfeAdapter(BaseAdapter):
             )
         except PlaywrightTimeoutError:
             pass
+
+    def _wait_for_datasheet_result_loaded(self) -> None:
+        page = self._require_page()
+        self._wait_for_loading_overlay_hidden()
+
+        page.wait_for_function(
+            """
+            () => {
+                const txt = document.body.innerText || "";
+
+                return txt.includes("CONNECTION PERFORMANCE")
+                    && txt.includes("Joint Strength")
+                    && txt.includes("Compression Rating")
+                    && txt.includes("Internal Yield Pressure")
+                    && txt.includes("Collapse Pressure");
+            }
+            """,
+            timeout=30000,
+        )
 
     def _select_datasheet_options(self, mapped_data: dict[str, Any]) -> None:
         selections = self._build_datasheet_selections(mapped_data)
@@ -651,6 +671,158 @@ class JfeAdapter(BaseAdapter):
             return 6000 - len(option_text)
 
         return None
+
+    def extract_required_data(
+        self,
+        mapped_data: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Extract the JFE datasheet result contract."""
+        connection_performance = self._extract_connection_performance()
+        drift_extraction = bool(mapped_data.get("drift_extraction"))
+
+        drift = self.NA
+        if drift_extraction:
+            drift = self._extract_drift_diameter()
+
+        return {
+            "tensile": connection_performance.get("tensile"),
+            "compression": connection_performance.get("compression"),
+            "burst": connection_performance.get("burst"),
+            "collapse": connection_performance.get("collapse"),
+            "drift": drift,
+        }
+
+    def _extract_connection_performance(self) -> dict[str, str | None]:
+        return {
+            "tensile": self._extract_first_number_from_table_field(
+                identifier="CONNECTION PERFORMANCE",
+                field_label="Joint Strength",
+            ),
+            "compression": self._extract_first_number_from_table_field(
+                identifier="CONNECTION PERFORMANCE",
+                field_label="Compression Rating",
+            ),
+            "burst": self._extract_first_number_from_table_field(
+                identifier="CONNECTION PERFORMANCE",
+                field_label="Internal Yield Pressure",
+            ),
+            "collapse": self._extract_first_number_from_table_field(
+                identifier="CONNECTION PERFORMANCE",
+                field_label="Collapse Pressure",
+            ),
+        }
+
+    def _extract_drift_diameter(self) -> str | None:
+        return self._extract_first_number_from_table_field(
+            identifier="PIPE",
+            field_label="Drift Diameter",
+        )
+
+    def _extract_first_number_from_table_field(
+        self,
+        identifier: str,
+        field_label: str,
+    ) -> str | None:
+        raw_value = self._extract_table_field_value(
+            identifier=identifier,
+            field_label=field_label,
+        )
+
+        if raw_value is None:
+            raise RuntimeError(
+                "Could not extract JFE field. "
+                f"identifier=[{identifier}], field_label=[{field_label}]"
+            )
+
+        value = self._extract_first_number(raw_value)
+        if value is None:
+            raise RuntimeError(
+                "Could not extract numeric value from JFE field. "
+                f"identifier=[{identifier}], field_label=[{field_label}], "
+                f"raw_value=[{raw_value}]"
+            )
+
+        return value
+
+    def _extract_table_field_value(
+        self,
+        identifier: str,
+        field_label: str,
+    ) -> str | None:
+        page = self._require_page()
+        return page.evaluate(
+            """
+            ({ identifier, fieldLabel }) => {
+                const normalize = (text) => {
+                    return (text || "")
+                        .replace(/\\s+/g, " ")
+                        .trim()
+                        .toLowerCase();
+                };
+
+                const identifierTarget = normalize(identifier);
+                const fieldTarget = normalize(fieldLabel);
+
+                const tbodies = Array.from(
+                    document.querySelectorAll("#datasheet_page tbody")
+                );
+
+                const targetTbody = tbodies.find((tbody) => {
+                    const identifierEl = tbody.querySelector(".identifier");
+                    if (!identifierEl) return false;
+
+                    const identifierText = normalize(identifierEl.innerText);
+                    return identifierText.includes(identifierTarget);
+                });
+
+                if (!targetTbody) {
+                    return null;
+                }
+
+                const rows = Array.from(targetTbody.querySelectorAll("tr"));
+
+                for (const row of rows) {
+                    const rowStyle = window.getComputedStyle(row);
+                    if (rowStyle.display === "none") {
+                        continue;
+                    }
+
+                    const cells = Array.from(row.querySelectorAll("td"));
+
+                    for (let i = 0; i < cells.length; i++) {
+                        const cell = cells[i];
+
+                        if (cell.classList.contains("identifier")) {
+                            continue;
+                        }
+
+                        const cellText = normalize(cell.innerText);
+
+                        if (
+                            cellText === fieldTarget
+                            || cellText.includes(fieldTarget)
+                        ) {
+                            for (let j = i + 1; j < cells.length; j++) {
+                                const valueText = (cells[j].innerText || "")
+                                    .replace(/\\s+/g, " ")
+                                    .trim();
+
+                                if (valueText) {
+                                    return valueText;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                return null;
+            }
+            """,
+            {
+                "identifier": identifier,
+                "fieldLabel": field_label,
+            },
+        )
 
     def _normalize_text(self, text: str | None) -> str:
         if not text:

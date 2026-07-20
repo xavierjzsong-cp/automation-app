@@ -1,4 +1,4 @@
-"""Smoke checks for the JFE adapter datasheet selection flow."""
+"""Smoke checks for the JFE adapter datasheet extraction flow."""
 
 from __future__ import annotations
 
@@ -20,6 +20,14 @@ class FakePage:
         self.goto_calls: list[dict[str, Any]] = []
         self.load_states: list[dict[str, Any]] = []
         self.function_checks: list[dict[str, Any]] = []
+        self.evaluate_calls: list[dict[str, str]] = []
+        self.table_values: dict[tuple[str, str], str | None] = {
+            ("CONNECTION PERFORMANCE", "Joint Strength"): "561,000 lbf",
+            ("CONNECTION PERFORMANCE", "Compression Rating"): "540,000 lbf",
+            ("CONNECTION PERFORMANCE", "Internal Yield Pressure"): "12,345 psi",
+            ("CONNECTION PERFORMANCE", "Collapse Pressure"): "10,987 psi",
+            ("PIPE", "Drift Diameter"): "4.767 in",
+        }
         self.locator_waits: list[dict[str, Any]] = []
         self.timeout = None
         self.navigation_timeout = None
@@ -48,6 +56,13 @@ class FakePage:
 
     def locator(self, selector: str) -> "FakeLocator":
         return FakeLocator(self, selector)
+
+    def evaluate(self, script: str, args: dict[str, str]) -> str | None:
+        assert "#datasheet_page tbody" in script
+        self.evaluate_calls.append(args)
+        return self.table_values.get(
+            (args["identifier"], args["fieldLabel"])
+        )
 
     def close(self) -> None:
         self.closed = True
@@ -300,6 +315,21 @@ def check_repeated_option_matching(adapter: JfeAdapter) -> None:
     ) is None
 
 
+def check_repeated_extraction(adapter: JfeAdapter) -> None:
+    """Exercise extraction repeatedly through the replaceable page boundary."""
+    mapped_data = build_mapped_data()
+    expected = {
+        "tensile": "561000",
+        "compression": "540000",
+        "burst": "12345",
+        "collapse": "10987",
+        "drift": "4.767",
+    }
+
+    for _ in range(250):
+        assert adapter.extract_required_data(mapped_data) == expected
+
+
 def main() -> None:
     tmp = TemporaryDirectory()
     fake_playwright = FakePlaywright()
@@ -360,11 +390,14 @@ def main() -> None:
         except ValueError:
             pass
 
-        try:
-            adapter.run(build_mapped_data())
-            raise AssertionError("Expected NotImplementedError for JFE automation.")
-        except NotImplementedError as exc:
-            assert str(exc) == "JFE datasheet extraction is not implemented yet."
+        result = adapter.run(build_mapped_data())
+        assert result == {
+            "tensile": "561000",
+            "compression": "540000",
+            "burst": "12345",
+            "collapse": "10987",
+            "drift": "4.767",
+        }
 
         assert adapter.dropdown_selections == [
             {"field_label": "Connection", "option_text": "JFEBEAR"},
@@ -393,7 +426,30 @@ def main() -> None:
 
         check_repeated_option_matching(adapter)
 
+        no_drift_data = build_mapped_data()
+        no_drift_data["drift_extraction"] = False
+        no_drift_result = adapter.extract_required_data(no_drift_data)
+        assert no_drift_result["drift"] == "NA"
+
         datasheet_page = fake_playwright.chromium.browser.context.pages[0]
+        missing_key = ("CONNECTION PERFORMANCE", "Joint Strength")
+        datasheet_page.table_values[missing_key] = None
+        try:
+            adapter._extract_first_number_from_table_field(*missing_key)
+            raise AssertionError("Expected RuntimeError for missing JFE field.")
+        except RuntimeError as exc:
+            assert "Could not extract JFE field" in str(exc)
+
+        datasheet_page.table_values[missing_key] = "Not available"
+        try:
+            adapter._extract_first_number_from_table_field(*missing_key)
+            raise AssertionError("Expected RuntimeError for nonnumeric JFE field.")
+        except RuntimeError as exc:
+            assert "Could not extract numeric value" in str(exc)
+
+        datasheet_page.table_values[missing_key] = "561,000 lbf"
+        check_repeated_extraction(adapter)
+
         assert datasheet_page.goto_calls == [
             {
                 "url": "https://www.jfetools.com/datasheet_generator",
@@ -408,9 +464,31 @@ def main() -> None:
         assert [check["timeout"] for check in datasheet_page.function_checks] == [
             30000,
             15000,
+            15000,
+            30000,
         ]
         assert "#datasheet_builder" in datasheet_page.function_checks[0]["script"]
         assert "JFEBEAR" in datasheet_page.function_checks[0]["script"]
+        assert "CONNECTION PERFORMANCE" in datasheet_page.function_checks[3]["script"]
+        assert datasheet_page.evaluate_calls[:5] == [
+            {
+                "identifier": "CONNECTION PERFORMANCE",
+                "fieldLabel": "Joint Strength",
+            },
+            {
+                "identifier": "CONNECTION PERFORMANCE",
+                "fieldLabel": "Compression Rating",
+            },
+            {
+                "identifier": "CONNECTION PERFORMANCE",
+                "fieldLabel": "Internal Yield Pressure",
+            },
+            {
+                "identifier": "CONNECTION PERFORMANCE",
+                "fieldLabel": "Collapse Pressure",
+            },
+            {"identifier": "PIPE", "fieldLabel": "Drift Diameter"},
+        ]
 
         adapter.open_blanking_page()
         assert datasheet_page.closed is True
