@@ -29,8 +29,17 @@ partners:
 
   JFE:
     display_name: "JFE"
+    company_name: "JFE Steel"
     enabled: true
     adapter: "jfe_adapter"
+    urls:
+      homepage: "https://www.jfetools.com/"
+      connection_datasheet: "https://www.jfetools.com/datasheet_generator"
+      blanking_dimensions: "https://www.jfetools.com/blanking_dimensions"
+    capabilities:
+      supports_connection_datasheet: true
+      supports_blanking_dimensions: true
+      requires_login: false
 
   HT:
     display_name: "SLHT"

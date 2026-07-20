@@ -12,6 +12,7 @@ from playwright.sync_api import (
     BrowserContext,
     Page,
     Playwright,
+    TimeoutError as PlaywrightTimeoutError,
     sync_playwright,
 )
 
@@ -69,9 +70,37 @@ class JfeAdapter(BaseAdapter):
         self._start_browser(playwright_factory)
 
     def run(self, mapped_data: dict[str, Any]) -> dict[str, Any]:
-        """Validate mapped data before JFE automation is implemented."""
+        """Validate mapped data and open the JFE datasheet page."""
         self._validate_mapped_data(mapped_data)
-        raise NotImplementedError("JFE automation is not implemented yet.")
+        self.open_datasheet_page()
+        self._wait_for_datasheet_page_loaded()
+        raise NotImplementedError(
+            "JFE datasheet selection is not implemented yet."
+        )
+
+    def open_datasheet_page(self) -> None:
+        """Open the JFE connection datasheet page."""
+        logger.info(
+            "Opening JFE connection datasheet page: %s",
+            self.datasheet_url,
+        )
+        self._goto_page(self.datasheet_url)
+
+    def open_blanking_page(self) -> None:
+        """Open the JFE blanking dimensions page in a fresh page."""
+        logger.info(
+            "Opening JFE blanking dimensions page: %s",
+            self.blanking_url,
+        )
+
+        page = self._require_page()
+        context = self._require_context()
+        self._safe_close("page", page)
+
+        self.page = context.new_page()
+        self.page.set_default_timeout(self.timeout_ms)
+        self.page.set_default_navigation_timeout(self.navigation_timeout_ms)
+        self._goto_page(self.blanking_url)
 
     def close(self) -> None:
         """Release browser resources idempotently."""
@@ -120,6 +149,108 @@ class JfeAdapter(BaseAdapter):
             resource.close()
         except Exception:
             logger.debug("Failed to close JFE adapter %s.", name, exc_info=True)
+
+    def _goto_page(self, url: str) -> None:
+        page = self._require_page()
+
+        try:
+            page.goto(
+                url,
+                wait_until="domcontentloaded",
+                timeout=self.navigation_timeout_ms,
+            )
+        except PlaywrightTimeoutError:
+            logger.warning(
+                "Navigation timeout. Continue with page readiness check: %s",
+                url,
+            )
+
+        try:
+            page.wait_for_load_state("load", timeout=10000)
+        except PlaywrightTimeoutError:
+            pass
+
+        try:
+            page.wait_for_load_state("networkidle", timeout=10000)
+        except PlaywrightTimeoutError:
+            pass
+
+    def _wait_for_datasheet_page_loaded(self) -> None:
+        page = self._require_page()
+        page.wait_for_function(
+            """
+            () => {
+                const builder = document.querySelector("#datasheet_builder");
+                if (!builder) return false;
+
+                const selects = Array.from(builder.querySelectorAll("select"));
+                if (selects.length < 2) return false;
+
+                const connectionSelect = selects.find(select => {
+                    const options = Array.from(select.options || []);
+                    return options.some(o => (o.textContent || "").trim() === "JFEBEAR");
+                });
+
+                return Boolean(connectionSelect);
+            }
+            """,
+            timeout=30000,
+        )
+        self._wait_for_loading_overlay_hidden()
+
+    def _wait_for_blanking_page_loaded(self) -> None:
+        page = self._require_page()
+        self._wait_for_loading_overlay_hidden()
+
+        page.locator("#datasheet_builder").wait_for(
+            state="visible",
+            timeout=30000,
+        )
+        page.locator("#datasheet_builder select").nth(3).wait_for(
+            state="visible",
+            timeout=30000,
+        )
+
+        self._wait_for_loading_overlay_hidden()
+
+    def _wait_for_loading_overlay_hidden(self) -> None:
+        page = self._require_page()
+
+        try:
+            page.wait_for_function(
+                """
+                () => {
+                    const overlays = Array.from(
+                        document.querySelectorAll(".loading-overlay")
+                    );
+
+                    if (overlays.length === 0) return true;
+
+                    return overlays.every((overlay) => {
+                        const style = window.getComputedStyle(overlay);
+
+                        return style.display === "none"
+                            || style.visibility === "hidden"
+                            || !overlay.classList.contains("is-active");
+                    });
+                }
+                """,
+                timeout=15000,
+            )
+        except PlaywrightTimeoutError:
+            pass
+
+    def _require_page(self) -> Page:
+        if self.page is None:
+            raise RuntimeError("JFE adapter page is not available.")
+
+        return self.page
+
+    def _require_context(self) -> BrowserContext:
+        if self.context is None:
+            raise RuntimeError("JFE adapter browser context is not available.")
+
+        return self.context
 
     def _validate_mapped_data(self, mapped_data: dict[str, Any]) -> None:
         partner = (mapped_data.get("partner") or "").upper()

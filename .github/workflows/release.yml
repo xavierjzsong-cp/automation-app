@@ -39,7 +39,7 @@ jobs:
       - name: Validate YAML config
         shell: pwsh
         run: |
-          python -c "import yaml; from pathlib import Path; partners=yaml.safe_load(Path('config/partners.yml').read_text(encoding='utf-8')); fields=yaml.safe_load(Path('config/field_mapping.yml').read_text(encoding='utf-8')); assert set(partners['partners']) == {'VAM', 'TSH', 'JFE', 'HT'}; assert partners['partners']['VAM']['urls']['homepage']; assert partners['partners']['VAM']['urls']['connection_datasheet']; assert partners['partners']['TSH']['urls']['homepage']; assert partners['partners']['TSH']['urls']['connection_datasheet']; assert partners['partners']['TSH']['urls']['blanking_dimensions']; assert {'od', 'wt', 'grade'} <= set(fields['fields']); print('yaml ok')"
+          python -c "import yaml; from pathlib import Path; partners=yaml.safe_load(Path('config/partners.yml').read_text(encoding='utf-8')); fields=yaml.safe_load(Path('config/field_mapping.yml').read_text(encoding='utf-8')); assert set(partners['partners']) == {'VAM', 'TSH', 'JFE', 'HT'}; assert partners['partners']['VAM']['urls']['homepage']; assert partners['partners']['VAM']['urls']['connection_datasheet']; assert partners['partners']['TSH']['urls']['homepage']; assert partners['partners']['TSH']['urls']['connection_datasheet']; assert partners['partners']['TSH']['urls']['blanking_dimensions']; assert partners['partners']['JFE']['urls']['homepage']; assert partners['partners']['JFE']['urls']['connection_datasheet']; assert partners['partners']['JFE']['urls']['blanking_dimensions']; assert {'od', 'wt', 'grade'} <= set(fields['fields']); print('yaml ok')"
 
       - name: Check parser behavior
         shell: pwsh
@@ -69,7 +69,7 @@ jobs:
         shell: pwsh
         run: python scripts/check_jfe_mapper.py
 
-      - name: Check JFE adapter interface
+      - name: Check JFE adapter navigation
         shell: pwsh
         run: python scripts/check_jfe_adapter.py
 
