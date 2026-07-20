@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -23,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 
 class JfeAdapter(BaseAdapter):
-    """Validate JFE mapped data and own the JFE browser session."""
+    """Automate JFE datasheet selection until extraction is implemented."""
 
     REQUIRED_CONNECTION_FIELDS = {
         "name",
@@ -70,12 +71,13 @@ class JfeAdapter(BaseAdapter):
         self._start_browser(playwright_factory)
 
     def run(self, mapped_data: dict[str, Any]) -> dict[str, Any]:
-        """Validate mapped data and open the JFE datasheet page."""
+        """Validate mapped data and select the JFE datasheet dropdowns."""
         self._validate_mapped_data(mapped_data)
         self.open_datasheet_page()
         self._wait_for_datasheet_page_loaded()
+        self._select_datasheet_options(mapped_data)
         raise NotImplementedError(
-            "JFE datasheet selection is not implemented yet."
+            "JFE datasheet extraction is not implemented yet."
         )
 
     def open_datasheet_page(self) -> None:
@@ -239,6 +241,471 @@ class JfeAdapter(BaseAdapter):
             )
         except PlaywrightTimeoutError:
             pass
+
+    def _select_datasheet_options(self, mapped_data: dict[str, Any]) -> None:
+        selections = self._build_datasheet_selections(mapped_data)
+
+        for field_label, option_text in selections:
+            self._select_dropdown_by_field_label(
+                field_label=field_label,
+                option_text=option_text,
+            )
+
+    def _build_datasheet_selections(
+        self,
+        mapped_data: dict[str, Any],
+    ) -> list[tuple[str, str]]:
+        connection = mapped_data.get("connection") or {}
+        grade = self._build_grade_option_text(connection)
+
+        selections = [
+            ("Connection", connection.get("name")),
+            ("Size", connection.get("od")),
+            ("Weight", connection.get("weight")),
+            ("Grade", grade),
+            ("Friction", connection.get("friction")),
+            ("Coupling", connection.get("coupling")),
+        ]
+
+        missing = [
+            field_label
+            for field_label, value in selections
+            if value is None or str(value).strip() == ""
+        ]
+        if missing:
+            raise ValueError(
+                "JFE mapped_data missing required datasheet fields: "
+                f"{missing}"
+            )
+
+        return [
+            (field_label, str(value).strip())
+            for field_label, value in selections
+        ]
+
+    def _build_grade_option_text(
+        self,
+        connection: dict[str, Any],
+    ) -> str | None:
+        material_family = connection.get("material_family")
+        yield_strength = connection.get("yield_strength")
+        grade_source = (
+            connection.get("grade_source") or "standard"
+        ).strip().lower()
+
+        if not material_family or not yield_strength:
+            return None
+
+        family = str(material_family).strip().upper()
+        strength = str(yield_strength).strip()
+
+        if grade_source == "jfe":
+            return self._build_jfe_grade(
+                material_family=family,
+                yield_strength=strength,
+            )
+
+        return self._build_standard_grade(
+            material_family=family,
+            yield_strength=strength,
+        )
+
+    def _build_standard_grade(
+        self,
+        material_family: str,
+        yield_strength: str,
+    ) -> str:
+        family = material_family.strip().upper()
+        strength = yield_strength.strip()
+
+        if family == "13CR":
+            return f"L{strength}-13CR"
+
+        return f"{family}-{strength}"
+
+    def _build_jfe_grade(
+        self,
+        material_family: str,
+        yield_strength: str,
+    ) -> str:
+        family = material_family.strip().upper()
+        strength = yield_strength.strip()
+
+        return f"JFE-{family}-{strength}"
+
+    def _select_dropdown_by_field_label(
+        self,
+        field_label: str,
+        option_text: str,
+    ) -> None:
+        select = self._wait_for_select_by_field_label(
+            field_label=field_label,
+            timeout_ms=30000,
+        )
+        matched_value = self._find_option_value_by_text(
+            select=select,
+            target_text=option_text,
+            field_label=field_label,
+        )
+
+        if matched_value is None:
+            available_options = self._get_select_option_texts(select)
+            raise RuntimeError(
+                "JFE option not found. "
+                f"field=[{field_label}], target=[{option_text}], "
+                f"available_options={available_options}"
+            )
+
+        select.scroll_into_view_if_needed()
+        select.select_option(value=matched_value)
+
+        page = self._require_page()
+        page.wait_for_timeout(1000)
+        self._wait_for_loading_overlay_hidden()
+
+        try:
+            page.wait_for_load_state("networkidle", timeout=5000)
+        except PlaywrightTimeoutError:
+            pass
+
+    def _wait_for_select_by_field_label(
+        self,
+        field_label: str,
+        timeout_ms: int = 30000,
+    ) -> Any:
+        page = self._require_page()
+        elapsed = 0
+        interval = 500
+
+        while elapsed < timeout_ms:
+            select = self._get_select_by_field_label(field_label)
+            if select is not None:
+                return select
+
+            page.wait_for_timeout(interval)
+            elapsed += interval
+
+        raise RuntimeError(f"JFE select not found for field: {field_label}")
+
+    def _get_select_by_field_label(self, field_label: str) -> Any | None:
+        normalized_target = self._normalize_text(field_label).upper()
+        scope = self._get_builder_scope()
+        fields = scope.locator(".field")
+
+        try:
+            field_count = fields.count()
+        except Exception:
+            field_count = 0
+
+        for index in range(field_count):
+            field = fields.nth(index)
+
+            try:
+                if not field.is_visible(timeout=500):
+                    continue
+            except Exception:
+                continue
+
+            select = field.locator("select").first
+
+            try:
+                if select.count() == 0 or not select.is_visible(timeout=500):
+                    continue
+            except Exception:
+                continue
+
+            label_text = ""
+            try:
+                label = field.locator("label").first
+                if label.count() > 0:
+                    label_text = self._normalize_text(
+                        label.text_content(timeout=500)
+                    )
+            except Exception:
+                label_text = ""
+
+            if label_text.upper() == normalized_target:
+                return select
+
+            normalized_options = {
+                self._normalize_text(text).upper()
+                for text in self._get_select_option_texts(select)
+            }
+            if normalized_target in normalized_options:
+                return select
+
+        return None
+
+    def _get_builder_scope(self) -> Any:
+        page = self._require_page()
+        candidates = [
+            page.locator("#datasheet_builder .left_col").first,
+            page.locator("#datasheet_builder").first,
+            page.locator(".column.is-narrow.hide-for-print").first,
+        ]
+
+        for candidate in candidates:
+            try:
+                if candidate.is_visible(timeout=1000):
+                    return candidate
+            except Exception:
+                continue
+
+        raise RuntimeError("Could not find JFE builder scope.")
+
+    def _get_select_option_texts(self, select: Any) -> list[str]:
+        options = select.locator("option")
+        texts: list[str] = []
+
+        try:
+            count = options.count()
+        except Exception:
+            return texts
+
+        for index in range(count):
+            try:
+                raw_text = options.nth(index).text_content(timeout=500)
+                text = self._normalize_text(raw_text)
+                if text:
+                    texts.append(text)
+            except Exception:
+                continue
+
+        return texts
+
+    def _find_option_value_by_text(
+        self,
+        select: Any,
+        target_text: str,
+        field_label: str,
+    ) -> str | None:
+        options = select.locator("option")
+        target_normalized = self._normalize_text(target_text)
+        target_upper = target_normalized.upper()
+        target_number = self._extract_first_number_as_float(target_normalized)
+        match_mode = self._get_match_mode_for_field(field_label)
+
+        best_value = None
+        best_score = None
+
+        try:
+            count = options.count()
+        except Exception:
+            count = 0
+
+        for index in range(count):
+            try:
+                option = options.nth(index)
+
+                if (
+                    option.get_attribute("disabled") is not None
+                    or option.get_attribute("hidden") is not None
+                ):
+                    continue
+
+                raw_text = option.text_content(timeout=500)
+                option_text = self._normalize_text(raw_text)
+                option_upper = option_text.upper()
+
+                if not option_text:
+                    continue
+
+                score = self._score_option_match(
+                    option_text=option_text,
+                    option_upper=option_upper,
+                    target_text=target_normalized,
+                    target_upper=target_upper,
+                    target_number=target_number,
+                    match_mode=match_mode,
+                )
+                if score is None:
+                    continue
+
+                value = option.get_attribute("value")
+                if value is None:
+                    continue
+
+                if best_score is None or score > best_score:
+                    best_score = score
+                    best_value = value
+            except Exception:
+                continue
+
+        return best_value
+
+    def _get_match_mode_for_field(self, field_label: str) -> str:
+        normalized = field_label.strip().upper()
+
+        if normalized in {"SIZE", "WEIGHT"}:
+            return "numeric"
+
+        if normalized == "GRADE":
+            return "grade"
+
+        return "text"
+
+    def _score_option_match(
+        self,
+        option_text: str,
+        option_upper: str,
+        target_text: str,
+        target_upper: str,
+        target_number: float | None,
+        match_mode: str,
+    ) -> int | None:
+        if match_mode == "numeric":
+            return self._score_numeric_option_match(
+                option_text=option_text,
+                option_upper=option_upper,
+                target_text=target_text,
+                target_upper=target_upper,
+                target_number=target_number,
+            )
+
+        if match_mode == "grade":
+            return self._score_grade_option_match(
+                option_text=option_text,
+                option_upper=option_upper,
+                target_text=target_text,
+                target_upper=target_upper,
+            )
+
+        return self._score_text_option_match(
+            option_text=option_text,
+            option_upper=option_upper,
+            target_text=target_text,
+            target_upper=target_upper,
+        )
+
+    def _score_numeric_option_match(
+        self,
+        option_text: str,
+        option_upper: str,
+        target_text: str,
+        target_upper: str,
+        target_number: float | None,
+    ) -> int | None:
+        if option_upper == target_upper:
+            return 10000
+
+        option_number = self._extract_first_number_as_float(option_text)
+        if (
+            target_number is not None
+            and option_number is not None
+            and option_number == target_number
+        ):
+            return 9000 - len(option_text)
+
+        compact_option = self._normalize_for_contains(option_upper)
+        compact_target = self._normalize_for_contains(target_upper)
+
+        if compact_target and compact_target in compact_option:
+            return 7000 - len(option_text)
+
+        if compact_option and compact_option in compact_target:
+            return 6000 - len(option_text)
+
+        return None
+
+    def _score_grade_option_match(
+        self,
+        option_text: str,
+        option_upper: str,
+        target_text: str,
+        target_upper: str,
+    ) -> int | None:
+        if option_upper == target_upper:
+            return 10000
+
+        compact_option = self._normalize_grade_for_match(option_text)
+        compact_target = self._normalize_grade_for_match(target_text)
+
+        if compact_option == compact_target:
+            return 9500
+
+        if compact_target and compact_target in compact_option:
+            return 8000 - len(option_text)
+
+        if compact_option and compact_option in compact_target:
+            return 7000 - len(option_text)
+
+        return None
+
+    def _score_text_option_match(
+        self,
+        option_text: str,
+        option_upper: str,
+        target_text: str,
+        target_upper: str,
+    ) -> int | None:
+        if option_upper == target_upper:
+            return 10000
+
+        compact_option = self._normalize_for_contains(option_upper)
+        compact_target = self._normalize_for_contains(target_upper)
+
+        if compact_target and compact_target in compact_option:
+            return 7000 - len(option_text)
+
+        if compact_option and compact_option in compact_target:
+            return 6000 - len(option_text)
+
+        return None
+
+    def _normalize_text(self, text: str | None) -> str:
+        if not text:
+            return ""
+
+        text = text.replace("\u00a0", " ")
+        text = text.replace("º", "°")
+        text = re.sub(r"\s+", " ", text)
+        return text.strip()
+
+    def _normalize_for_contains(self, text: str) -> str:
+        text = self._normalize_text(text)
+        text = text.replace(" ", "")
+        text = text.replace("-", "")
+        text = text.replace("_", "")
+        return text.upper()
+
+    def _normalize_grade_for_match(self, text: str | None) -> str:
+        if not text:
+            return ""
+
+        text = self._normalize_text(text)
+        text = text.upper()
+        text = text.replace(" ", "")
+        text = text.replace("-", "")
+        text = text.replace("_", "")
+        text = text.replace("(", "")
+        text = text.replace(")", "")
+        return text
+
+    def _extract_first_number(self, text: str | None) -> str | None:
+        if not text:
+            return None
+
+        match = re.search(
+            r"[-+]?\d[\d,]*(?:\.\d+)?",
+            text.replace(",", ""),
+        )
+        if not match:
+            return None
+
+        return match.group(0)
+
+    def _extract_first_number_as_float(
+        self,
+        text: str | None,
+    ) -> float | None:
+        value = self._extract_first_number(text)
+        if value is None:
+            return None
+
+        try:
+            return float(value)
+        except ValueError:
+            return None
 
     def _require_page(self) -> Page:
         if self.page is None:

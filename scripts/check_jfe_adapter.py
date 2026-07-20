@@ -1,4 +1,4 @@
-"""Smoke checks for the JFE adapter navigation flow."""
+"""Smoke checks for the JFE adapter datasheet selection flow."""
 
 from __future__ import annotations
 
@@ -123,6 +123,74 @@ class FakePlaywright:
         self.stopped = True
 
 
+class RecordingJfeAdapter(JfeAdapter):
+    """Replace page interaction while preserving adapter orchestration."""
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        self.dropdown_selections: list[dict[str, str]] = []
+        super().__init__(*args, **kwargs)
+
+    def _select_dropdown_by_field_label(
+        self,
+        field_label: str,
+        option_text: str,
+    ) -> None:
+        self.dropdown_selections.append(
+            {
+                "field_label": field_label,
+                "option_text": option_text,
+            }
+        )
+
+
+class FakeOption:
+    def __init__(
+        self,
+        text: str,
+        value: str | None,
+        *,
+        disabled: bool = False,
+        hidden: bool = False,
+    ) -> None:
+        self.text = text
+        self.value = value
+        self.disabled = disabled
+        self.hidden = hidden
+
+    def get_attribute(self, name: str) -> str | None:
+        if name == "value":
+            return self.value
+        if name == "disabled" and self.disabled:
+            return "disabled"
+        if name == "hidden" and self.hidden:
+            return "hidden"
+        return None
+
+    def text_content(self, timeout: int) -> str:
+        assert timeout == 500
+        return self.text
+
+
+class FakeOptionCollection:
+    def __init__(self, options: list[FakeOption]) -> None:
+        self.options = options
+
+    def count(self) -> int:
+        return len(self.options)
+
+    def nth(self, index: int) -> FakeOption:
+        return self.options[index]
+
+
+class FakeSelect:
+    def __init__(self, options: list[FakeOption]) -> None:
+        self.options = FakeOptionCollection(options)
+
+    def locator(self, selector: str) -> FakeOptionCollection:
+        assert selector == "option"
+        return self.options
+
+
 def build_mapped_data() -> dict[str, Any]:
     return {
         "partner": "JFE",
@@ -142,10 +210,100 @@ def build_mapped_data() -> dict[str, Any]:
     }
 
 
+def check_repeated_option_matching(adapter: JfeAdapter) -> None:
+    """Exercise deterministic matching repeatedly without website traffic."""
+    select_cases = [
+        (
+            "Connection",
+            "JFEBEAR",
+            FakeSelect(
+                [
+                    FakeOption("Connection", "", disabled=True),
+                    FakeOption("JFE BEAR", "connection-bear"),
+                    FakeOption("JFE FOX", "connection-fox"),
+                ]
+            ),
+            "connection-bear",
+        ),
+        (
+            "Size",
+            "5.500",
+            FakeSelect(
+                [
+                    FakeOption("5.000 in", "size-5"),
+                    FakeOption("5.500 in", "size-5.5"),
+                    FakeOption("5.500", "hidden-exact", hidden=True),
+                ]
+            ),
+            "size-5.5",
+        ),
+        (
+            "Weight",
+            "17",
+            FakeSelect(
+                [
+                    FakeOption("15.50 lb/ft", "weight-15.5"),
+                    FakeOption("17.00 lb/ft", "weight-17"),
+                ]
+            ),
+            "weight-17",
+        ),
+        (
+            "Grade",
+            "L80-13CR",
+            FakeSelect(
+                [
+                    FakeOption("L80 13CR", "grade-l80"),
+                    FakeOption("L95 13CR", "grade-l95"),
+                ]
+            ),
+            "grade-l80",
+        ),
+        (
+            "Friction",
+            "API Modified",
+            FakeSelect(
+                [
+                    FakeOption("API", "friction-api"),
+                    FakeOption("API Modified", "friction-api-modified"),
+                ]
+            ),
+            "friction-api-modified",
+        ),
+        (
+            "Coupling",
+            "STD",
+            FakeSelect(
+                [
+                    FakeOption("Special Clearance", "coupling-special"),
+                    FakeOption("STD", "coupling-std"),
+                ]
+            ),
+            "coupling-std",
+        ),
+    ]
+
+    for _ in range(250):
+        for field_label, target, select, expected in select_cases:
+            actual = adapter._find_option_value_by_text(
+                select=select,
+                target_text=target,
+                field_label=field_label,
+            )
+            assert actual == expected
+
+    unmatched = FakeSelect([FakeOption("9.625 in", "size-9.625")])
+    assert adapter._find_option_value_by_text(
+        select=unmatched,
+        target_text="5.500",
+        field_label="Size",
+    ) is None
+
+
 def main() -> None:
     tmp = TemporaryDirectory()
     fake_playwright = FakePlaywright()
-    adapter = JfeAdapter(
+    adapter = RecordingJfeAdapter(
         base_url="https://www.jfetools.com/",
         datasheet_url="https://www.jfetools.com/datasheet_generator",
         blanking_url="https://www.jfetools.com/blanking_dimensions",
@@ -183,6 +341,8 @@ def main() -> None:
             raise AssertionError("Expected ValueError for incomplete JFE data.")
         except ValueError:
             pass
+        assert adapter.page.goto_calls == []
+        assert adapter.dropdown_selections == []
 
         invalid_type = build_mapped_data()
         invalid_type["connection"]["type"] = "COUPLING"
@@ -204,7 +364,34 @@ def main() -> None:
             adapter.run(build_mapped_data())
             raise AssertionError("Expected NotImplementedError for JFE automation.")
         except NotImplementedError as exc:
-            assert str(exc) == "JFE datasheet selection is not implemented yet."
+            assert str(exc) == "JFE datasheet extraction is not implemented yet."
+
+        assert adapter.dropdown_selections == [
+            {"field_label": "Connection", "option_text": "JFEBEAR"},
+            {"field_label": "Size", "option_text": "5.500"},
+            {"field_label": "Weight", "option_text": "17"},
+            {"field_label": "Grade", "option_text": "L80-13CR"},
+            {"field_label": "Friction", "option_text": "API Modified"},
+            {"field_label": "Coupling", "option_text": "STD"},
+        ]
+
+        jfe_grade_data = build_mapped_data()
+        jfe_grade_data["connection"]["grade_source"] = "jfe"
+        jfe_grade_data["connection"]["yield_strength"] = "95"
+        assert adapter._build_grade_option_text(
+            jfe_grade_data["connection"]
+        ) == "JFE-13CR-95"
+        assert adapter._build_standard_grade("carbon", "80") == "CARBON-80"
+
+        incomplete_selection = build_mapped_data()
+        incomplete_selection["connection"]["friction"] = ""
+        try:
+            adapter._build_datasheet_selections(incomplete_selection)
+            raise AssertionError("Expected ValueError for missing JFE friction.")
+        except ValueError as exc:
+            assert "Friction" in str(exc)
+
+        check_repeated_option_matching(adapter)
 
         datasheet_page = fake_playwright.chromium.browser.context.pages[0]
         assert datasheet_page.goto_calls == [
