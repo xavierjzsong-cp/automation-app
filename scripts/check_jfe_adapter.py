@@ -330,6 +330,19 @@ def check_repeated_extraction(adapter: JfeAdapter) -> None:
         assert adapter.extract_required_data(mapped_data) == expected
 
 
+def check_repeated_blanking_selections(adapter: JfeAdapter) -> None:
+    """Exercise deterministic blanking field construction repeatedly."""
+    expected = [
+        ("Connection", "JFEBEAR"),
+        ("Size", "5.500"),
+        ("Weight", "17"),
+        ("Coupling Type", "STD"),
+    ]
+
+    for _ in range(250):
+        assert adapter._build_blanking_selections(build_mapped_data()) == expected
+
+
 def main() -> None:
     tmp = TemporaryDirectory()
     fake_playwright = FakePlaywright()
@@ -390,14 +403,12 @@ def main() -> None:
         except ValueError:
             pass
 
-        result = adapter.run(build_mapped_data())
-        assert result == {
-            "tensile": "561000",
-            "compression": "540000",
-            "burst": "12345",
-            "collapse": "10987",
-            "drift": "4.767",
-        }
+        datasheet_page = fake_playwright.chromium.browser.context.pages[0]
+        try:
+            adapter.run(build_mapped_data())
+            raise AssertionError("Expected NotImplementedError for JFE blanking extraction.")
+        except NotImplementedError as exc:
+            assert str(exc) == "JFE blanking extraction is not implemented yet."
 
         assert adapter.dropdown_selections == [
             {"field_label": "Connection", "option_text": "JFEBEAR"},
@@ -406,6 +417,10 @@ def main() -> None:
             {"field_label": "Grade", "option_text": "L80-13CR"},
             {"field_label": "Friction", "option_text": "API Modified"},
             {"field_label": "Coupling", "option_text": "STD"},
+            {"field_label": "Connection", "option_text": "JFEBEAR"},
+            {"field_label": "Size", "option_text": "5.500"},
+            {"field_label": "Weight", "option_text": "17"},
+            {"field_label": "Coupling Type", "option_text": "STD"},
         ]
 
         jfe_grade_data = build_mapped_data()
@@ -425,29 +440,39 @@ def main() -> None:
             assert "Friction" in str(exc)
 
         check_repeated_option_matching(adapter)
+        check_repeated_blanking_selections(adapter)
+
+        incomplete_blanking = build_mapped_data()
+        incomplete_blanking["connection"]["coupling"] = ""
+        try:
+            adapter._build_blanking_selections(incomplete_blanking)
+            raise AssertionError("Expected ValueError for missing JFE coupling.")
+        except ValueError as exc:
+            assert "Coupling Type" in str(exc)
 
         no_drift_data = build_mapped_data()
         no_drift_data["drift_extraction"] = False
         no_drift_result = adapter.extract_required_data(no_drift_data)
         assert no_drift_result["drift"] == "NA"
 
-        datasheet_page = fake_playwright.chromium.browser.context.pages[0]
+        extraction_page = adapter.page
+        assert extraction_page is not None
         missing_key = ("CONNECTION PERFORMANCE", "Joint Strength")
-        datasheet_page.table_values[missing_key] = None
+        extraction_page.table_values[missing_key] = None
         try:
             adapter._extract_first_number_from_table_field(*missing_key)
             raise AssertionError("Expected RuntimeError for missing JFE field.")
         except RuntimeError as exc:
             assert "Could not extract JFE field" in str(exc)
 
-        datasheet_page.table_values[missing_key] = "Not available"
+        extraction_page.table_values[missing_key] = "Not available"
         try:
             adapter._extract_first_number_from_table_field(*missing_key)
             raise AssertionError("Expected RuntimeError for nonnumeric JFE field.")
         except RuntimeError as exc:
             assert "Could not extract numeric value" in str(exc)
 
-        datasheet_page.table_values[missing_key] = "561,000 lbf"
+        extraction_page.table_values[missing_key] = "561,000 lbf"
         check_repeated_extraction(adapter)
 
         assert datasheet_page.goto_calls == [
@@ -490,7 +515,6 @@ def main() -> None:
             {"identifier": "PIPE", "fieldLabel": "Drift Diameter"},
         ]
 
-        adapter.open_blanking_page()
         assert datasheet_page.closed is True
         assert len(fake_playwright.chromium.browser.context.pages) == 2
 
@@ -510,7 +534,6 @@ def main() -> None:
             {"state": "networkidle", "timeout": 10000},
         ]
 
-        adapter._wait_for_blanking_page_loaded()
         assert [check["timeout"] for check in blanking_page.function_checks] == [
             15000,
             15000,

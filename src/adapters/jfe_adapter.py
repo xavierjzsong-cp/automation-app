@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 
 class JfeAdapter(BaseAdapter):
-    """Automate JFE datasheet selection and extraction."""
+    """Automate JFE datasheet extraction and blanking selection."""
 
     NA = "NA"
 
@@ -73,13 +73,21 @@ class JfeAdapter(BaseAdapter):
         self._start_browser(playwright_factory)
 
     def run(self, mapped_data: dict[str, Any]) -> dict[str, Any]:
-        """Validate mapped data and extract JFE datasheet values."""
+        """Extract JFE datasheet values and select blanking dropdowns."""
         self._validate_mapped_data(mapped_data)
         self.open_datasheet_page()
         self._wait_for_datasheet_page_loaded()
         self._select_datasheet_options(mapped_data)
         self._wait_for_datasheet_result_loaded()
-        return self.extract_required_data(mapped_data=mapped_data)
+        datasheet_result = self.extract_required_data(mapped_data=mapped_data)
+
+        self.open_blanking_page()
+        self._wait_for_blanking_page_loaded()
+        self._select_blanking_options(mapped_data)
+
+        raise NotImplementedError(
+            "JFE blanking extraction is not implemented yet."
+        )
 
     def open_datasheet_page(self) -> None:
         """Open the JFE connection datasheet page."""
@@ -352,6 +360,43 @@ class JfeAdapter(BaseAdapter):
         strength = yield_strength.strip()
 
         return f"JFE-{family}-{strength}"
+
+    def _select_blanking_options(self, mapped_data: dict[str, Any]) -> None:
+        selections = self._build_blanking_selections(mapped_data)
+
+        for field_label, option_text in selections:
+            self._select_dropdown_by_field_label(
+                field_label=field_label,
+                option_text=option_text,
+            )
+
+    def _build_blanking_selections(
+        self,
+        mapped_data: dict[str, Any],
+    ) -> list[tuple[str, str]]:
+        connection = mapped_data.get("connection") or {}
+        selections = [
+            ("Connection", connection.get("name")),
+            ("Size", connection.get("od")),
+            ("Weight", connection.get("weight")),
+            ("Coupling Type", connection.get("coupling")),
+        ]
+
+        missing = [
+            field_label
+            for field_label, value in selections
+            if value is None or str(value).strip() == ""
+        ]
+        if missing:
+            raise ValueError(
+                "JFE mapped_data missing required blanking fields: "
+                f"{missing}"
+            )
+
+        return [
+            (field_label, str(value).strip())
+            for field_label, value in selections
+        ]
 
     def _select_dropdown_by_field_label(
         self,
