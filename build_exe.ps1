@@ -94,6 +94,9 @@ try {
     Write-Host "Checking service TSH adapter flow..."
     Invoke-Python @("scripts/check_service_tsh_flow.py")
 
+    Write-Host "Checking service JFE adapter flow..."
+    Invoke-Python @("scripts/check_service_jfe_flow.py")
+
     Write-Host "Build checks passed."
     Write-Host "PyInstaller packaging will be added after the application workflow is ready."
 }

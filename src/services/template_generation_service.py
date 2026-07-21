@@ -8,6 +8,7 @@ from typing import Any, Callable
 
 import yaml
 
+from src.adapters.jfe_adapter import JfeAdapter
 from src.adapters.tsh_adapter import TshAdapter
 from src.adapters.vam_adapter import VamAdapter
 from src.mappers.jfe_mapper import JfeMapper
@@ -81,6 +82,7 @@ class TemplateGenerationService:
         self.adapter_factories = adapter_factories or {
             "VAM": VamAdapter,
             "TSH": TshAdapter,
+            "JFE": JfeAdapter,
         }
         self.partners_config_path = Path(partners_config_path) if partners_config_path else resource_path("config/partners.yml")
         self.logs_dir = Path(logs_dir) if logs_dir else get_logs_dir(create=False)
@@ -214,6 +216,24 @@ class TemplateGenerationService:
                 raise ValueError("TSH config missing urls.connection_datasheet")
             if not blanking_url:
                 raise ValueError("TSH config missing urls.blanking_dimensions")
+
+            adapter = adapter_factory(
+                base_url=base_url,
+                datasheet_url=datasheet_url,
+                blanking_url=blanking_url,
+                logs_dir=self.logs_dir,
+                headless=not show_browser,
+                slow_mo=300,
+                timeout_ms=10000,
+                navigation_timeout_ms=60000,
+            )
+        elif partner == "JFE":
+            datasheet_url = urls.get("connection_datasheet")
+            blanking_url = urls.get("blanking_dimensions")
+            if not datasheet_url:
+                raise ValueError("JFE config missing urls.connection_datasheet")
+            if not blanking_url:
+                raise ValueError("JFE config missing urls.blanking_dimensions")
 
             adapter = adapter_factory(
                 base_url=base_url,

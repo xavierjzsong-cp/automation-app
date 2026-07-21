@@ -95,6 +95,10 @@ jobs:
         shell: pwsh
         run: python scripts/check_service_tsh_flow.py
 
+      - name: Check service JFE adapter flow
+        shell: pwsh
+        run: python scripts/check_service_jfe_flow.py
+
       - name: Print release placeholder
         shell: pwsh
         run: |

@@ -33,6 +33,7 @@ scripts/check_jfe_mapper.py
 scripts/check_jfe_adapter.py
 scripts/check_service_vam_flow.py
 scripts/check_service_tsh_flow.py
+scripts/check_service_jfe_flow.py
 src/writers/template_writer.py
 run_ui.py
 requirements.txt
@@ -54,7 +55,7 @@ run_ui.py
     Minimal application entry point.
 
 src/services/template_generation_service.py
-    Orchestrates parser, router, mapper, optional VAM adapter execution, and writer.
+    Orchestrates parser, router, mapper, optional VAM/TSH/JFE adapter execution, and writer.
 
 src/utils/app_paths.py
     Path helpers for source resources and per-user AppData files.
@@ -103,6 +104,9 @@ scripts/check_service_vam_flow.py
 
 scripts/check_service_tsh_flow.py
     Smoke check for TSH mapper and adapter integration inside TemplateGenerationService.
+
+scripts/check_service_jfe_flow.py
+    Smoke and repeatability check for JFE mapper and replaceable adapter integration inside TemplateGenerationService.
 
 src/writers/template_writer.py
     Excel writer that fills parser-derived and adapter-derived fields into a selected sheet.
@@ -166,6 +170,7 @@ python scripts/check_vam_adapter.py
 python scripts/check_tsh_adapter.py
 python scripts/check_service_vam_flow.py
 python scripts/check_service_tsh_flow.py
+python scripts/check_service_jfe_flow.py
 ```
 
 Or run the local build-check script:
