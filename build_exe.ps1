@@ -74,7 +74,7 @@ try {
     Write-Host "Checking JFE mapper behavior..."
     Invoke-Python @("scripts/check_jfe_mapper.py")
 
-    Write-Host "Checking JFE adapter blanking selection..."
+    Write-Host "Checking JFE adapter blanking extraction..."
     Invoke-Python @("scripts/check_jfe_adapter.py")
 
     Write-Host "Checking TSH adapter blanking extraction..."

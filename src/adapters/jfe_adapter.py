@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 
 class JfeAdapter(BaseAdapter):
-    """Automate JFE datasheet extraction and blanking selection."""
+    """Automate JFE datasheet and blanking extraction."""
 
     NA = "NA"
 
@@ -73,8 +73,11 @@ class JfeAdapter(BaseAdapter):
         self._start_browser(playwright_factory)
 
     def run(self, mapped_data: dict[str, Any]) -> dict[str, Any]:
-        """Extract JFE datasheet values and select blanking dropdowns."""
+        """Extract JFE datasheet and blanking values."""
         self._validate_mapped_data(mapped_data)
+        connection = mapped_data["connection"]
+        connection_type = str(connection["type"]).upper()
+
         self.open_datasheet_page()
         self._wait_for_datasheet_page_loaded()
         self._select_datasheet_options(mapped_data)
@@ -84,10 +87,13 @@ class JfeAdapter(BaseAdapter):
         self.open_blanking_page()
         self._wait_for_blanking_page_loaded()
         self._select_blanking_options(mapped_data)
+        self._wait_for_blanking_dimensions_loaded()
+        blanking_result = self._extract_blanking_dimensions(connection_type)
 
-        raise NotImplementedError(
-            "JFE blanking extraction is not implemented yet."
-        )
+        return {
+            **datasheet_result,
+            **blanking_result,
+        }
 
     def open_datasheet_page(self) -> None:
         """Open the JFE connection datasheet page."""
@@ -265,6 +271,28 @@ class JfeAdapter(BaseAdapter):
                     && txt.includes("Compression Rating")
                     && txt.includes("Internal Yield Pressure")
                     && txt.includes("Collapse Pressure");
+            }
+            """,
+            timeout=30000,
+        )
+
+    def _wait_for_blanking_dimensions_loaded(self) -> None:
+        page = self._require_page()
+        self._wait_for_loading_overlay_hidden()
+
+        page.wait_for_function(
+            """
+            () => {
+                const wrapper = document.querySelector(
+                    "#blanking_dimensions_wrapper"
+                );
+                if (!wrapper) return false;
+
+                return Boolean(
+                    wrapper.querySelector("#pin_boring")
+                    && wrapper.querySelector("#box_boring")
+                    && wrapper.querySelector("#turning_diameter")
+                );
             }
             """,
             timeout=30000,
@@ -868,6 +896,203 @@ class JfeAdapter(BaseAdapter):
                 "fieldLabel": field_label,
             },
         )
+
+    def _extract_blanking_dimensions(
+        self,
+        connection_type: str,
+    ) -> dict[str, Any]:
+        turning_length = self._extract_blanking_turning_length(connection_type)
+
+        return {
+            "od": self._extract_blanking_od(connection_type),
+            "id": self._extract_blanking_id(connection_type),
+            "external_length": turning_length,
+            "internal_length": turning_length,
+        }
+
+    def _extract_blanking_id(
+        self,
+        connection_type: str,
+    ) -> dict[str, str]:
+        selector = (
+            "#pin_boring"
+            if connection_type == "PIN"
+            else "#box_boring"
+        )
+        page = self._require_page()
+        raw_data = page.evaluate(
+            """
+            (selector) => {
+                const root = document.querySelector(selector);
+                if (!root) return null;
+
+                const top = root.querySelector(".top");
+                const columns = Array.from(
+                    root.querySelectorAll(".columns .column")
+                );
+
+                return {
+                    nominal: top ? top.innerText : null,
+                    tolerances: columns.map(col => col.innerText || "")
+                };
+            }
+            """,
+            selector,
+        )
+
+        if not raw_data:
+            raise RuntimeError(
+                f"Could not find JFE blanking ID section: {selector}"
+            )
+
+        return self._build_nominal_tolerance_dimension(
+            raw_data=raw_data,
+            field_name=f"JFE blanking ID {connection_type}",
+        )
+
+    def _extract_blanking_od(
+        self,
+        connection_type: str,
+    ) -> dict[str, str]:
+        page = self._require_page()
+        raw_data = page.evaluate(
+            """
+            (connectionType) => {
+                const root = document.querySelector("#turning_diameter");
+                if (!root) return null;
+
+                const topColumns = Array.from(
+                    root.querySelectorAll(".top .columns .column")
+                );
+
+                const toleranceColumns = Array.from(
+                    root.querySelectorAll(":scope > .columns .column")
+                );
+
+                const isPin = connectionType === "PIN";
+
+                const nominalText = isPin
+                    ? (topColumns[0] ? topColumns[0].innerText : null)
+                    : (topColumns[1] ? topColumns[1].innerText : null);
+
+                const toleranceTexts = isPin
+                    ? toleranceColumns.slice(0, 2).map(
+                        col => col.innerText || ""
+                    )
+                    : toleranceColumns.slice(2, 4).map(
+                        col => col.innerText || ""
+                    );
+
+                return {
+                    nominal: nominalText,
+                    tolerances: toleranceTexts
+                };
+            }
+            """,
+            connection_type,
+        )
+
+        if not raw_data:
+            raise RuntimeError(
+                "Could not find JFE blanking OD section: #turning_diameter"
+            )
+
+        return self._build_nominal_tolerance_dimension(
+            raw_data=raw_data,
+            field_name=f"JFE blanking OD {connection_type}",
+        )
+
+    def _extract_blanking_turning_length(
+        self,
+        connection_type: str,
+    ) -> str:
+        selector = (
+            "#pin_turning_length"
+            if connection_type == "PIN"
+            else "#box_turning_length"
+        )
+        page = self._require_page()
+        raw_text = page.evaluate(
+            """
+            (selector) => {
+                const root = document.querySelector(selector);
+                if (!root) return null;
+
+                return root.innerText || root.textContent || null;
+            }
+            """,
+            selector,
+        )
+
+        if not raw_text:
+            raise RuntimeError(
+                "Could not find JFE blanking turning length section: "
+                f"{selector}"
+            )
+
+        value = self._extract_min_length_number(raw_text)
+        if value is None:
+            raise RuntimeError(
+                "Could not extract JFE blanking turning length value. "
+                f"connection_type={connection_type}, raw_text=[{raw_text}]"
+            )
+
+        return self._format_length_number(value)
+
+    def _extract_min_length_number(self, text: str | None) -> str | None:
+        if not text:
+            return None
+
+        normalized = self._normalize_text(text)
+        match = re.search(
+            r"\bMin\s+([+\-]?\d[\d,]*(?:\.\d+)?)",
+            normalized,
+            flags=re.IGNORECASE,
+        )
+
+        if match:
+            return match.group(1)
+
+        return self._extract_first_number(normalized)
+
+    def _format_length_number(self, value: str) -> str:
+        try:
+            return f"{float(value.replace(',', '').strip()):.3f}"
+        except ValueError:
+            return value.strip()
+
+    def _build_nominal_tolerance_dimension(
+        self,
+        raw_data: dict[str, Any],
+        field_name: str,
+    ) -> dict[str, str]:
+        nominal = self._extract_first_number(raw_data.get("nominal"))
+        tolerances = [
+            self._extract_first_number(text)
+            for text in raw_data.get("tolerances", [])
+        ]
+        tolerances = [
+            value
+            for value in tolerances
+            if value is not None
+        ]
+
+        if nominal is None or len(tolerances) < 2:
+            raise RuntimeError(
+                f"Invalid {field_name} data. raw_data={raw_data}"
+            )
+
+        return {
+            "nominal": self._format_nominal(nominal),
+            "tol_1": tolerances[0],
+            "tol_2": tolerances[1],
+        }
+
+    def _format_nominal(self, value: str) -> str:
+        try:
+            return f"{float(value.replace(',', '').strip()):.3f}"
+        except ValueError:
+            return value.strip()
 
     def _normalize_text(self, text: str | None) -> str:
         if not text:

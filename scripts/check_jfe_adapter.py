@@ -28,6 +28,31 @@ class FakePage:
             ("CONNECTION PERFORMANCE", "Collapse Pressure"): "10,987 psi",
             ("PIPE", "Drift Diameter"): "4.767 in",
         }
+        self.blanking_id_values: dict[str, dict[str, Any] | None] = {
+            "#box_boring": {
+                "nominal": "4.601 in",
+                "tolerances": ["+0.010", "-0.005"],
+            },
+            "#pin_boring": {
+                "nominal": "4.321 in",
+                "tolerances": ["+0.012", "-0.006"],
+            },
+        }
+        self.blanking_od_values: dict[str, dict[str, Any] | None] = {
+            "BOX": {
+                "nominal": "6.125 in",
+                "tolerances": ["+0.015", "-0.007"],
+            },
+            "PIN": {
+                "nominal": "5.901 in",
+                "tolerances": ["+0.014", "-0.008"],
+            },
+        }
+        self.turning_length_values: dict[str, str | None] = {
+            "#box_turning_length": "Length Min 4.875 in",
+            "#pin_turning_length": "Length Min 5.250 in",
+        }
+        self.blanking_evaluate_calls: list[dict[str, str]] = []
         self.locator_waits: list[dict[str, Any]] = []
         self.timeout = None
         self.navigation_timeout = None
@@ -57,12 +82,29 @@ class FakePage:
     def locator(self, selector: str) -> "FakeLocator":
         return FakeLocator(self, selector)
 
-    def evaluate(self, script: str, args: dict[str, str]) -> str | None:
-        assert "#datasheet_page tbody" in script
-        self.evaluate_calls.append(args)
-        return self.table_values.get(
-            (args["identifier"], args["fieldLabel"])
+    def evaluate(
+        self,
+        script: str,
+        args: dict[str, str] | str,
+    ) -> Any:
+        if isinstance(args, dict):
+            assert "#datasheet_page tbody" in script
+            self.evaluate_calls.append(args)
+            return self.table_values.get(
+                (args["identifier"], args["fieldLabel"])
+            )
+
+        self.blanking_evaluate_calls.append(
+            {"script": script, "argument": args}
         )
+        if "#turning_diameter" in script:
+            return self.blanking_od_values.get(args)
+        if "root.querySelector(\".top\")" in script:
+            return self.blanking_id_values.get(args)
+        if "root.innerText || root.textContent" in script:
+            return self.turning_length_values.get(args)
+
+        raise AssertionError(f"Unexpected JFE evaluate call: {args}")
 
     def close(self) -> None:
         self.closed = True
@@ -343,6 +385,26 @@ def check_repeated_blanking_selections(adapter: JfeAdapter) -> None:
         assert adapter._build_blanking_selections(build_mapped_data()) == expected
 
 
+def check_repeated_blanking_extraction(adapter: JfeAdapter) -> None:
+    """Exercise BOX and PIN blanking extraction repeatedly without network IO."""
+    expected_box = {
+        "od": {"nominal": "6.125", "tol_1": "+0.015", "tol_2": "-0.007"},
+        "id": {"nominal": "4.601", "tol_1": "+0.010", "tol_2": "-0.005"},
+        "external_length": "4.875",
+        "internal_length": "4.875",
+    }
+    expected_pin = {
+        "od": {"nominal": "5.901", "tol_1": "+0.014", "tol_2": "-0.008"},
+        "id": {"nominal": "4.321", "tol_1": "+0.012", "tol_2": "-0.006"},
+        "external_length": "5.250",
+        "internal_length": "5.250",
+    }
+
+    for _ in range(250):
+        assert adapter._extract_blanking_dimensions("BOX") == expected_box
+        assert adapter._extract_blanking_dimensions("PIN") == expected_pin
+
+
 def main() -> None:
     tmp = TemporaryDirectory()
     fake_playwright = FakePlaywright()
@@ -404,11 +466,26 @@ def main() -> None:
             pass
 
         datasheet_page = fake_playwright.chromium.browser.context.pages[0]
-        try:
-            adapter.run(build_mapped_data())
-            raise AssertionError("Expected NotImplementedError for JFE blanking extraction.")
-        except NotImplementedError as exc:
-            assert str(exc) == "JFE blanking extraction is not implemented yet."
+        result = adapter.run(build_mapped_data())
+        assert result == {
+            "tensile": "561000",
+            "compression": "540000",
+            "burst": "12345",
+            "collapse": "10987",
+            "drift": "4.767",
+            "od": {
+                "nominal": "6.125",
+                "tol_1": "+0.015",
+                "tol_2": "-0.007",
+            },
+            "id": {
+                "nominal": "4.601",
+                "tol_1": "+0.010",
+                "tol_2": "-0.005",
+            },
+            "external_length": "4.875",
+            "internal_length": "4.875",
+        }
 
         assert adapter.dropdown_selections == [
             {"field_label": "Connection", "option_text": "JFEBEAR"},
@@ -474,6 +551,30 @@ def main() -> None:
 
         extraction_page.table_values[missing_key] = "561,000 lbf"
         check_repeated_extraction(adapter)
+        check_repeated_blanking_extraction(adapter)
+
+        assert adapter._format_length_number(
+            adapter._extract_min_length_number("Length Min 1,234.5 in") or ""
+        ) == "1234.500"
+        try:
+            adapter._build_nominal_tolerance_dimension(
+                raw_data={"nominal": "5.500", "tolerances": ["+0.010"]},
+                field_name="JFE blanking test",
+            )
+            raise AssertionError("Expected RuntimeError for incomplete tolerance data.")
+        except RuntimeError as exc:
+            assert "Invalid JFE blanking test data" in str(exc)
+
+        missing_length_selector = "#box_turning_length"
+        extraction_page.turning_length_values[missing_length_selector] = None
+        try:
+            adapter._extract_blanking_turning_length("BOX")
+            raise AssertionError("Expected RuntimeError for missing turning length.")
+        except RuntimeError as exc:
+            assert "turning length section" in str(exc)
+        extraction_page.turning_length_values[missing_length_selector] = (
+            "Length Min 4.875 in"
+        )
 
         assert datasheet_page.goto_calls == [
             {
@@ -537,7 +638,10 @@ def main() -> None:
         assert [check["timeout"] for check in blanking_page.function_checks] == [
             15000,
             15000,
+            15000,
+            30000,
         ]
+        assert "#blanking_dimensions_wrapper" in blanking_page.function_checks[3]["script"]
         assert blanking_page.locator_waits == [
             {
                 "selector": "#datasheet_builder",
@@ -551,6 +655,14 @@ def main() -> None:
                 "state": "visible",
                 "timeout": 30000,
             },
+        ]
+        assert [
+            call["argument"]
+            for call in blanking_page.blanking_evaluate_calls[:3]
+        ] == [
+            "#box_turning_length",
+            "BOX",
+            "#box_boring",
         ]
     finally:
         adapter.close()

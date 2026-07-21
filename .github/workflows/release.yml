@@ -69,7 +69,7 @@ jobs:
         shell: pwsh
         run: python scripts/check_jfe_mapper.py
 
-      - name: Check JFE adapter blanking selection
+      - name: Check JFE adapter blanking extraction
         shell: pwsh
         run: python scripts/check_jfe_adapter.py
 

@@ -78,7 +78,7 @@ src/adapters/base_adapter.py
     Shared interface for partner website adapters.
 
 src/adapters/jfe_adapter.py
-    JFE adapter with mapped-data validation, Playwright browser lifecycle management, datasheet/blanking page navigation, datasheet selection/extraction, and blanking dropdown selection.
+    JFE adapter with mapped-data validation, Playwright browser lifecycle management, datasheet/blanking page navigation, selection, and extraction.
 
 src/adapters/tsh_adapter.py
     TSH adapter with mapped-data validation, Playwright browser lifecycle management, datasheet/blanking page navigation, and datasheet/blanking extraction.
@@ -96,7 +96,7 @@ scripts/check_jfe_mapper.py
     Smoke check for JFE mapper formatting and validation behavior.
 
 scripts/check_jfe_adapter.py
-    Smoke check for JFE adapter browser lifecycle, page navigation/readiness, datasheet selection/extraction, blanking selection, grade construction, selection/extraction repeatability, failure handling, and mapped-data validation.
+    Smoke check for JFE adapter browser lifecycle, datasheet/blanking selection and extraction, BOX/PIN dimensions, grade construction, repeatability, failure handling, and mapped-data validation.
 
 scripts/check_service_vam_flow.py
     Smoke check for VAM mapper and adapter integration inside TemplateGenerationService.
@@ -196,7 +196,7 @@ VAM mapper behavior smoke check
 VAM adapter data extraction smoke check
 TSH mapper behavior smoke check
 JFE mapper behavior smoke check
-JFE adapter blanking selection and repeatability smoke check
+JFE adapter blanking extraction and repeatability smoke check
 TSH adapter blanking extraction smoke check
 Writer behavior smoke check
 Service flow smoke check
