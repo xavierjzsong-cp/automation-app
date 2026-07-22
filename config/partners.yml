@@ -43,5 +43,14 @@ partners:
 
   HT:
     display_name: "SLHT"
+    company_name: "Hunting PLC"
     enabled: true
     adapter: "ht_adapter"
+    urls:
+      homepage: "https://datasheet.hunting-intl.com"
+      connection_datasheet: "https://datasheet.hunting-intl.com/CommercialDatasheets"
+      blanking_dimensions: null
+    capabilities:
+      supports_connection_datasheet: true
+      supports_blanking_dimensions: false
+      requires_login: false
