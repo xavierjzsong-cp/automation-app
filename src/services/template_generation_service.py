@@ -11,6 +11,7 @@ import yaml
 from src.adapters.jfe_adapter import JfeAdapter
 from src.adapters.tsh_adapter import TshAdapter
 from src.adapters.vam_adapter import VamAdapter
+from src.mappers.ht_mapper import HtMapper
 from src.mappers.jfe_mapper import JfeMapper
 from src.mappers.tsh_mapper import TshMapper
 from src.mappers.vam_mapper import VamMapper
@@ -75,6 +76,7 @@ class TemplateGenerationService:
         self.router = router or PartnerRouter()
         self.writer = writer or TemplateWriter()
         self.mapper_registry = mapper_registry or {
+            "HT": HtMapper(),
             "JFE": JfeMapper(),
             "VAM": VamMapper(),
             "TSH": TshMapper(),

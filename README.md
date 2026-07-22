@@ -23,6 +23,7 @@ src/routers/partner_router.py
 src/mappers/tsh_mapper.py
 src/mappers/vam_mapper.py
 src/mappers/jfe_mapper.py
+src/mappers/ht_mapper.py
 src/adapters/base_adapter.py
 src/adapters/jfe_adapter.py
 src/adapters/tsh_adapter.py
@@ -30,6 +31,7 @@ src/adapters/vam_adapter.py
 scripts/check_vam_adapter.py
 scripts/check_tsh_adapter.py
 scripts/check_jfe_mapper.py
+scripts/check_ht_mapper.py
 scripts/check_jfe_adapter.py
 scripts/check_service_vam_flow.py
 scripts/check_service_tsh_flow.py
@@ -75,6 +77,9 @@ src/mappers/tsh_mapper.py
 src/mappers/jfe_mapper.py
     Converts routed JFE targets into JFE adapter input fields.
 
+src/mappers/ht_mapper.py
+    Converts routed HT targets into HT adapter input fields.
+
 src/adapters/base_adapter.py
     Shared interface for partner website adapters.
 
@@ -95,6 +100,9 @@ scripts/check_tsh_adapter.py
 
 scripts/check_jfe_mapper.py
     Smoke check for JFE mapper formatting and validation behavior.
+
+scripts/check_ht_mapper.py
+    Smoke and repeatability check for HT mapper formatting and validation behavior.
 
 scripts/check_jfe_adapter.py
     Smoke check for JFE adapter browser lifecycle, datasheet/blanking selection and extraction, BOX/PIN dimensions, grade construction, repeatability, failure handling, and mapped-data validation.
@@ -160,11 +168,12 @@ Run the same core checks used by the current CI:
 
 ```powershell
 python -m compileall -q run_ui.py src
-python -c "from src.services.template_generation_service import GenerationRequest, GenerationResult, TemplateGenerationService; from src.parsers.pots_doc_parser import PotsDocParser; from src.routers.partner_router import PartnerRouter; from src.mappers.jfe_mapper import JfeMapper; from src.mappers.tsh_mapper import TshMapper; from src.mappers.vam_mapper import VamMapper; from src.adapters.jfe_adapter import JfeAdapter; from src.writers.template_writer import TemplateWriter; from src.utils.app_paths import resource_path, get_ui_settings_path; print(resource_path('config/partners.yml')); print(get_ui_settings_path()); print('ok')"
+python -c "from src.services.template_generation_service import GenerationRequest, GenerationResult, TemplateGenerationService; from src.parsers.pots_doc_parser import PotsDocParser; from src.routers.partner_router import PartnerRouter; from src.mappers.ht_mapper import HtMapper; from src.mappers.jfe_mapper import JfeMapper; from src.mappers.tsh_mapper import TshMapper; from src.mappers.vam_mapper import VamMapper; from src.adapters.jfe_adapter import JfeAdapter; from src.writers.template_writer import TemplateWriter; from src.utils.app_paths import resource_path, get_ui_settings_path; print(resource_path('config/partners.yml')); print(get_ui_settings_path()); print('ok')"
 python -c "import yaml; from pathlib import Path; partners=yaml.safe_load(Path('config/partners.yml').read_text(encoding='utf-8')); fields=yaml.safe_load(Path('config/field_mapping.yml').read_text(encoding='utf-8')); assert set(partners['partners']) == {'VAM', 'TSH', 'JFE', 'HT'}; assert partners['partners']['JFE']['urls']['homepage']; assert partners['partners']['JFE']['urls']['connection_datasheet']; assert partners['partners']['JFE']['urls']['blanking_dimensions']; assert {'od', 'wt', 'grade'} <= set(fields['fields']); print('yaml ok')"
 python -c "from src.parsers.pots_doc_parser import PotsDocParser; text='POTS Document number: 123 Rev: A\nCP Part Number ABC-001\nProduct Description Pup Joint 13CR(80) 5.5 17# VAM TOP BOX X 5.5 17# TSH WEDGE PIN OAL 120\nANSI/NACE MR0175/ISO 15156 (Yes/No) Yes\nQCP (Standard/Client Specific) Standard\n'; parsed=PotsDocParser().parse_text(text); assert parsed.part_number == 'ABC-001'; assert parsed.rev == 'A'; assert parsed.product_material_grade == '13CR(80)'; assert parsed.connections['upper'].family == 'VAM'; assert parsed.connections['lower'].family == 'TSH'; print('parser ok')"
 python -c "from src.adapters.vam_adapter import VamAdapter; print('vam adapter import ok')"
 python scripts/check_jfe_mapper.py
+python scripts/check_ht_mapper.py
 python scripts/check_jfe_adapter.py
 python scripts/check_vam_adapter.py
 python scripts/check_tsh_adapter.py
