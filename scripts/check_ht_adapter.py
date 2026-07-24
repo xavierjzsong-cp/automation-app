@@ -1,4 +1,4 @@
-"""Smoke and lifecycle repeatability checks for the HT adapter interface."""
+"""Smoke checks for the HT adapter navigation flow and lifecycle."""
 
 from __future__ import annotations
 
@@ -6,6 +6,8 @@ import sys
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any
+
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
@@ -17,14 +19,49 @@ from src.adapters.ht_adapter import HtAdapter  # noqa: E402
 
 class FakePage:
     def __init__(self) -> None:
+        self.goto_calls: list[dict[str, Any]] = []
+        self.load_states: list[dict[str, Any]] = []
+        self.function_checks: list[dict[str, Any]] = []
         self.timeout = None
         self.navigation_timeout = None
+        self.goto_timeout = False
+        self.load_state_timeouts: set[str] = set()
 
     def set_default_timeout(self, timeout: int) -> None:
         self.timeout = timeout
 
     def set_default_navigation_timeout(self, timeout: int) -> None:
         self.navigation_timeout = timeout
+
+    def goto(self, url: str, wait_until: str, timeout: int) -> None:
+        self.goto_calls.append(
+            {
+                "url": url,
+                "wait_until": wait_until,
+                "timeout": timeout,
+            }
+        )
+        if self.goto_timeout:
+            raise PlaywrightTimeoutError("fake navigation timeout")
+
+    def wait_for_load_state(self, state: str, timeout: int) -> None:
+        self.load_states.append({"state": state, "timeout": timeout})
+        if state in self.load_state_timeouts:
+            raise PlaywrightTimeoutError(f"fake {state} timeout")
+
+    def wait_for_function(
+        self,
+        script: str,
+        arg: Any = None,
+        timeout: int = 0,
+    ) -> None:
+        self.function_checks.append(
+            {
+                "script": script,
+                "arg": arg,
+                "timeout": timeout,
+            }
+        )
 
 
 class FakeContext:
@@ -180,11 +217,43 @@ def main() -> None:
             except ValueError:
                 pass
 
+            assert fake_playwright.chromium.browser.context.page.goto_calls == []
+
             try:
                 adapter.run(build_mapped_data())
                 raise AssertionError("Expected NotImplementedError for HT automation.")
             except NotImplementedError as exc:
-                assert str(exc) == "HT automation is not implemented yet."
+                assert str(exc) == "HT search selection is not implemented yet."
+
+            page = fake_playwright.chromium.browser.context.page
+            assert page.goto_calls == [
+                {
+                    "url": (
+                        "https://datasheet.hunting-intl.com/CommercialDatasheets"
+                    ),
+                    "wait_until": "domcontentloaded",
+                    "timeout": 5678,
+                }
+            ]
+            assert page.load_states == [
+                {"state": "load", "timeout": 10000},
+                {"state": "networkidle", "timeout": 10000},
+            ]
+            assert [check["timeout"] for check in page.function_checks] == [
+                30000,
+                30000,
+                30000,
+            ]
+            assert "#ConnectionStyle" in page.function_checks[0]["script"]
+            assert "#ConnectionType" in page.function_checks[0]["script"]
+            assert "#OD" in page.function_checks[0]["script"]
+            assert "#NominalWeight" in page.function_checks[0]["script"]
+            assert "#MaterialGrade" in page.function_checks[0]["script"]
+            assert page.function_checks[1]["arg"] == "ConnectionStyle"
+            assert page.function_checks[2]["arg"] == {
+                "inputId": "ConnectionStyle",
+                "minCount": 1,
+            }
         finally:
             adapter.close()
             assert fake_playwright.chromium.browser.context.closed is True
@@ -201,6 +270,19 @@ def main() -> None:
             assert str(exc) == "fake launch failed"
         assert failed_playwright.started is True
         assert failed_playwright.stopped is True
+
+        timeout_playwright = FakePlaywright()
+        timeout_adapter = build_adapter(logs_dir, timeout_playwright)
+        timeout_page = timeout_playwright.chromium.browser.context.page
+        timeout_page.goto_timeout = True
+        timeout_page.load_state_timeouts = {"load", "networkidle"}
+        timeout_adapter.open_datasheet_page()
+        assert len(timeout_page.goto_calls) == 1
+        assert timeout_page.load_states == [
+            {"state": "load", "timeout": 10000},
+            {"state": "networkidle", "timeout": 10000},
+        ]
+        timeout_adapter.close()
 
         check_repeated_lifecycle(logs_dir)
 

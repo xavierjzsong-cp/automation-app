@@ -12,6 +12,7 @@ from playwright.sync_api import (
     BrowserContext,
     Page,
     Playwright,
+    TimeoutError as PlaywrightTimeoutError,
     sync_playwright,
 )
 
@@ -63,9 +64,16 @@ class HtAdapter(BaseAdapter):
         self._start_browser(playwright_factory)
 
     def run(self, mapped_data: dict[str, Any]) -> dict[str, Any]:
-        """Validate mapped data before HT automation is implemented."""
+        """Validate mapped data and open the HT datasheet search page."""
         self._validate_mapped_data(mapped_data)
-        raise NotImplementedError("HT automation is not implemented yet.")
+        self.open_datasheet_page()
+        self._wait_for_search_page_loaded()
+        raise NotImplementedError("HT search selection is not implemented yet.")
+
+    def open_datasheet_page(self) -> None:
+        """Open the HT connection datasheet search page."""
+        logger.info("Opening HT datasheet search page: %s", self.datasheet_url)
+        self._goto_page(self.datasheet_url)
 
     def close(self) -> None:
         """Release browser resources idempotently."""
@@ -114,6 +122,102 @@ class HtAdapter(BaseAdapter):
             resource.close()
         except Exception:
             logger.debug("Failed to close HT adapter %s.", name, exc_info=True)
+
+    def _goto_page(self, url: str) -> None:
+        page = self._require_page()
+
+        try:
+            page.goto(
+                url,
+                wait_until="domcontentloaded",
+                timeout=self.navigation_timeout_ms,
+            )
+        except PlaywrightTimeoutError:
+            logger.warning(
+                "Navigation timeout. Continue with page readiness check: %s",
+                url,
+            )
+
+        try:
+            page.wait_for_load_state("load", timeout=10000)
+        except PlaywrightTimeoutError:
+            pass
+
+        try:
+            page.wait_for_load_state("networkidle", timeout=10000)
+        except PlaywrightTimeoutError:
+            pass
+
+    def _wait_for_search_page_loaded(self) -> None:
+        page = self._require_page()
+        page.wait_for_function(
+            """
+            () => {
+                return Boolean(
+                    window.jQuery
+                    && window.kendo
+                    && document.querySelector("#ConnectionStyle")
+                    && document.querySelector("#ConnectionType")
+                    && document.querySelector("#OD")
+                    && document.querySelector("#NominalWeight")
+                    && document.querySelector("#MaterialGrade")
+                );
+            }
+            """,
+            timeout=30000,
+        )
+
+        self._wait_for_kendo_dropdown_ready("ConnectionStyle")
+        self._wait_for_kendo_dropdown_data("ConnectionStyle")
+
+    def _wait_for_kendo_dropdown_ready(self, input_id: str) -> None:
+        page = self._require_page()
+        page.wait_for_function(
+            """
+            (inputId) => {
+                if (!window.jQuery) return false;
+                const ddl = window.jQuery("#" + inputId).data("kendoDropDownList");
+                return Boolean(ddl);
+            }
+            """,
+            arg=input_id,
+            timeout=30000,
+        )
+
+    def _wait_for_kendo_dropdown_data(
+        self,
+        input_id: str,
+        min_count: int = 1,
+        timeout_ms: int = 30000,
+    ) -> None:
+        page = self._require_page()
+        page.wait_for_function(
+            """
+            ({ inputId, minCount }) => {
+                if (!window.jQuery) return false;
+
+                const ddl = window.jQuery("#" + inputId).data("kendoDropDownList");
+                if (!ddl) return false;
+
+                const items = ddl.dataSource && ddl.dataSource.view
+                    ? ddl.dataSource.view()
+                    : [];
+
+                return items && items.length >= minCount;
+            }
+            """,
+            arg={
+                "inputId": input_id,
+                "minCount": min_count,
+            },
+            timeout=timeout_ms,
+        )
+
+    def _require_page(self) -> Page:
+        if self.page is None:
+            raise RuntimeError("HT adapter page is not available.")
+
+        return self.page
 
     def _validate_mapped_data(self, mapped_data: dict[str, Any]) -> None:
         partner = (mapped_data.get("partner") or "").upper()
