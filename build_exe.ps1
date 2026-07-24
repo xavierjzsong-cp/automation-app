@@ -77,7 +77,7 @@ try {
     Write-Host "Checking HT mapper behavior..."
     Invoke-Python @("scripts/check_ht_mapper.py")
 
-    Write-Host "Checking HT adapter navigation..."
+    Write-Host "Checking HT adapter datasheet selection..."
     Invoke-Python @("scripts/check_ht_adapter.py")
 
     Write-Host "Checking JFE adapter blanking extraction..."

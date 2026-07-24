@@ -25,6 +25,8 @@ logger = logging.getLogger(__name__)
 class HtAdapter(BaseAdapter):
     """Validate HT mapped data and own the HT browser session."""
 
+    CONNECTION_STYLE = "Threaded and Coupled"
+
     REQUIRED_CONNECTION_FIELDS = {
         "name",
         "od",
@@ -64,11 +66,26 @@ class HtAdapter(BaseAdapter):
         self._start_browser(playwright_factory)
 
     def run(self, mapped_data: dict[str, Any]) -> dict[str, Any]:
-        """Validate mapped data and open the HT datasheet search page."""
+        """Validate mapped data and select the HT datasheet search options."""
         self._validate_mapped_data(mapped_data)
+        connection = mapped_data["connection"]
+        connection_type = self._map_connection_type(str(connection["name"]))
+        material_grade = self._map_material_grade(mapped_data)
+        if not material_grade:
+            raise ValueError(
+                "HT mapped_data missing material grade information. "
+                "Expected connection.material_family + connection.yield_strength."
+            )
+
         self.open_datasheet_page()
         self._wait_for_search_page_loaded()
-        raise NotImplementedError("HT search selection is not implemented yet.")
+        self._select_search_options(
+            connection_type=connection_type,
+            od_value=str(connection["od"]).strip(),
+            weight_value=str(connection["weight"]).strip(),
+            material_grade=material_grade,
+        )
+        raise NotImplementedError("HT report opening is not implemented yet.")
 
     def open_datasheet_page(self) -> None:
         """Open the HT connection datasheet search page."""
@@ -213,11 +230,294 @@ class HtAdapter(BaseAdapter):
             timeout=timeout_ms,
         )
 
+    def _select_search_options(
+        self,
+        connection_type: str,
+        od_value: str,
+        weight_value: str,
+        material_grade: str,
+    ) -> None:
+        self._select_kendo_dropdown_by_text(
+            input_id="ConnectionStyle",
+            target_text=self.CONNECTION_STYLE,
+            match_mode="text",
+        )
+
+        self._wait_for_kendo_dropdown_data("ConnectionType")
+
+        self._select_kendo_dropdown_by_text(
+            input_id="ConnectionType",
+            target_text=connection_type,
+            match_mode="text",
+        )
+
+        self._wait_for_kendo_dropdown_data("OD")
+
+        self._select_kendo_dropdown_by_text(
+            input_id="OD",
+            target_text=od_value,
+            match_mode="numeric",
+        )
+
+        self._wait_for_kendo_dropdown_data("NominalWeight")
+
+        self._select_kendo_dropdown_by_text(
+            input_id="NominalWeight",
+            target_text=weight_value,
+            match_mode="numeric",
+        )
+
+        self._wait_for_kendo_dropdown_data("MaterialGrade")
+
+        self._select_kendo_dropdown_by_text(
+            input_id="MaterialGrade",
+            target_text=material_grade,
+            match_mode="material",
+        )
+
+    def _select_kendo_dropdown_by_text(
+        self,
+        input_id: str,
+        target_text: str,
+        match_mode: str,
+    ) -> None:
+        page = self._require_page()
+        result = page.evaluate(
+            """
+            async ({ inputId, targetText, matchMode }) => {
+                const wait = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+                const normalizeText = (value) => {
+                    return String(value || "")
+                        .replace(/\\u00a0/g, " ")
+                        .replace(/\\s+/g, " ")
+                        .trim();
+                };
+
+                const extractNumber = (value) => {
+                    const text = normalizeText(value).replace(/,/g, "");
+                    const match = text.match(/[-+]?\\d+(?:\\.\\d+)?/);
+                    return match ? Number(match[0]) : null;
+                };
+
+                const normalizeMaterial = (value) => {
+                    return normalizeText(value)
+                        .toUpperCase()
+                        .replace(/[\\s\\-_/()]/g, "");
+                };
+
+                const extractYieldStrength = (value) => {
+                    const text = normalizeText(value).replace(/,/g, "");
+                    const matches = text.match(/\\d+(?:\\.\\d+)?/g);
+
+                    if (!matches || matches.length === 0) {
+                        return null;
+                    }
+
+                    return Number(matches[matches.length - 1]);
+                };
+
+                const scoreItem = (itemText) => {
+                    const optionText = normalizeText(itemText);
+                    const optionUpper = optionText.toUpperCase();
+                    const target = normalizeText(targetText);
+                    const targetUpper = target.toUpperCase();
+
+                    if (!optionText || !target) return null;
+
+                    if (optionUpper === targetUpper) {
+                        return 10000;
+                    }
+
+                    if (matchMode === "numeric") {
+                        const optionNumber = extractNumber(optionText);
+                        const targetNumber = extractNumber(target);
+
+                        if (
+                            optionNumber !== null
+                            && targetNumber !== null
+                            && Math.abs(optionNumber - targetNumber) < 0.000001
+                        ) {
+                            return 9000 - optionText.length;
+                        }
+
+                        return null;
+                    }
+
+                    if (matchMode === "material") {
+                        const optionMaterial = normalizeMaterial(optionText);
+                        const targetMaterial = normalizeMaterial(target);
+
+                        if (optionMaterial === targetMaterial) {
+                            return 10000;
+                        }
+
+                        const optionYield = extractYieldStrength(optionText);
+                        const targetYield = extractYieldStrength(target);
+
+                        if (
+                            optionYield !== null
+                            && targetYield !== null
+                            && Math.abs(optionYield - targetYield) < 0.000001
+                        ) {
+                            return 5000;
+                        }
+
+                        return null;
+                    }
+
+                    if (optionUpper.includes(targetUpper)) {
+                        return 7000 - optionText.length;
+                    }
+
+                    return null;
+                };
+
+                const ddl = window.jQuery("#" + inputId).data("kendoDropDownList");
+
+                if (!ddl) {
+                    return {
+                        ok: false,
+                        reason: "Kendo DropDownList not found",
+                        inputId,
+                    };
+                }
+
+                for (let i = 0; i < 20; i++) {
+                    const view = ddl.dataSource && ddl.dataSource.view
+                        ? ddl.dataSource.view()
+                        : [];
+
+                    if (view && view.length > 0) {
+                        break;
+                    }
+
+                    try {
+                        ddl.dataSource.read();
+                    } catch (e) {
+                        // ignore
+                    }
+
+                    await wait(500);
+                }
+
+                const data = ddl.dataSource && ddl.dataSource.view
+                    ? ddl.dataSource.view()
+                    : [];
+
+                let bestItem = null;
+                let bestScore = null;
+
+                for (const item of data) {
+                    const itemText = normalizeText(item.Text ?? item.text ?? item.Name ?? "");
+                    const itemValue = item.Value ?? item.value ?? item.Id ?? itemText;
+
+                    if (!itemText) continue;
+
+                    const score = scoreItem(itemText);
+                    if (score === null) continue;
+
+                    if (bestScore === null || score > bestScore) {
+                        bestScore = score;
+                        bestItem = {
+                            text: itemText,
+                            value: itemValue,
+                        };
+                    }
+                }
+
+                if (!bestItem) {
+                    return {
+                        ok: false,
+                        reason: "Option not found",
+                        inputId,
+                        targetText,
+                        matchMode,
+                        availableOptions: data.map(item =>
+                            normalizeText(item.Text ?? item.text ?? item.Name ?? "")
+                        ).filter(Boolean),
+                    };
+                }
+
+                ddl.value(bestItem.value);
+                ddl.trigger("change");
+                ddl.element.trigger("change");
+
+                return {
+                    ok: true,
+                    inputId,
+                    selectedText: bestItem.text,
+                    selectedValue: bestItem.value,
+                };
+            }
+            """,
+            {
+                "inputId": input_id,
+                "targetText": target_text,
+                "matchMode": match_mode,
+            },
+        )
+
+        if not result or not result.get("ok"):
+            raise RuntimeError(f"Failed to select HT dropdown option: {result}")
+
+        logger.info(
+            "Selected HT dropdown %s -> %s",
+            input_id,
+            result.get("selectedText"),
+        )
+
+        page.wait_for_timeout(1200)
+
+        try:
+            page.wait_for_load_state("networkidle", timeout=5000)
+        except PlaywrightTimeoutError:
+            pass
+
     def _require_page(self) -> Page:
         if self.page is None:
             raise RuntimeError("HT adapter page is not available.")
 
         return self.page
+
+    def _map_connection_type(self, connection_name: str) -> str:
+        text = connection_name.strip().upper()
+        text = text.replace(" ", "")
+
+        if "SLHT-S" in text or "SLHTS" in text or "HT-S" in text or "HTS" in text:
+            return "SEAL-LOCK HT-S"
+
+        if "SLHT" in text or text == "HT":
+            return "SEAL-LOCK HT"
+
+        raise ValueError(f"Unsupported HT connection name: {connection_name}")
+
+    def _map_material_grade(self, mapped_data: dict[str, Any]) -> str | None:
+        connection = mapped_data.get("connection") or {}
+
+        material_family = connection.get("material_family")
+        yield_strength = connection.get("yield_strength")
+
+        if not material_family or not yield_strength:
+            return None
+
+        return self._build_material_grade(
+            material_family=str(material_family),
+            yield_strength=str(yield_strength),
+        )
+
+    def _build_material_grade(
+        self,
+        material_family: str,
+        yield_strength: str,
+    ) -> str:
+        family = material_family.strip().upper()
+        strength = yield_strength.strip().upper()
+
+        if strength.endswith(".0"):
+            strength = strength[:-2]
+
+        return f"{family}-{strength}"
 
     def _validate_mapped_data(self, mapped_data: dict[str, Any]) -> None:
         partner = (mapped_data.get("partner") or "").upper()

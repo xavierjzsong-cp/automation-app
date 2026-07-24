@@ -73,7 +73,7 @@ jobs:
         shell: pwsh
         run: python scripts/check_ht_mapper.py
 
-      - name: Check HT adapter navigation
+      - name: Check HT adapter datasheet selection
         shell: pwsh
         run: python scripts/check_ht_adapter.py
 

@@ -1,4 +1,4 @@
-"""Smoke checks for the HT adapter navigation flow and lifecycle."""
+"""Smoke checks for the HT adapter datasheet selection flow."""
 
 from __future__ import annotations
 
@@ -22,10 +22,13 @@ class FakePage:
         self.goto_calls: list[dict[str, Any]] = []
         self.load_states: list[dict[str, Any]] = []
         self.function_checks: list[dict[str, Any]] = []
+        self.evaluate_calls: list[dict[str, Any]] = []
+        self.wait_timeouts: list[int] = []
         self.timeout = None
         self.navigation_timeout = None
         self.goto_timeout = False
         self.load_state_timeouts: set[str] = set()
+        self.selection_failure_input: str | None = None
 
     def set_default_timeout(self, timeout: int) -> None:
         self.timeout = timeout
@@ -62,6 +65,25 @@ class FakePage:
                 "timeout": timeout,
             }
         )
+
+    def evaluate(self, script: str, args: dict[str, Any]) -> dict[str, Any]:
+        assert "kendoDropDownList" in script
+        self.evaluate_calls.append(args)
+        if args["inputId"] == self.selection_failure_input:
+            return {
+                "ok": False,
+                "reason": "Option not found",
+                "inputId": args["inputId"],
+            }
+        return {
+            "ok": True,
+            "inputId": args["inputId"],
+            "selectedText": args["targetText"],
+            "selectedValue": args["targetText"],
+        }
+
+    def wait_for_timeout(self, timeout: int) -> None:
+        self.wait_timeouts.append(timeout)
 
 
 class FakeContext:
@@ -159,6 +181,49 @@ def check_repeated_lifecycle(logs_dir: Path) -> None:
         assert adapter._closed is True
 
 
+def check_repeated_selection(adapter: HtAdapter) -> None:
+    """Exercise deterministic selection orchestration without website traffic."""
+    page = adapter._require_page()
+    start_evaluate_count = len(page.evaluate_calls)
+
+    for _ in range(250):
+        adapter._select_search_options(
+            connection_type="SEAL-LOCK HT-S",
+            od_value="7.000",
+            weight_value="29.500",
+            material_grade="13CR-95",
+        )
+
+    assert len(page.evaluate_calls) - start_evaluate_count == 1250
+    assert page.evaluate_calls[-5:] == [
+        {
+            "inputId": "ConnectionStyle",
+            "targetText": "Threaded and Coupled",
+            "matchMode": "text",
+        },
+        {
+            "inputId": "ConnectionType",
+            "targetText": "SEAL-LOCK HT-S",
+            "matchMode": "text",
+        },
+        {
+            "inputId": "OD",
+            "targetText": "7.000",
+            "matchMode": "numeric",
+        },
+        {
+            "inputId": "NominalWeight",
+            "targetText": "29.500",
+            "matchMode": "numeric",
+        },
+        {
+            "inputId": "MaterialGrade",
+            "targetText": "13CR-95",
+            "matchMode": "material",
+        },
+    ]
+
+
 def main() -> None:
     with TemporaryDirectory() as tmp_name:
         logs_dir = Path(tmp_name) / "logs"
@@ -223,7 +288,7 @@ def main() -> None:
                 adapter.run(build_mapped_data())
                 raise AssertionError("Expected NotImplementedError for HT automation.")
             except NotImplementedError as exc:
-                assert str(exc) == "HT search selection is not implemented yet."
+                assert str(exc) == "HT report opening is not implemented yet."
 
             page = fake_playwright.chromium.browser.context.page
             assert page.goto_calls == [
@@ -235,11 +300,18 @@ def main() -> None:
                     "timeout": 5678,
                 }
             ]
-            assert page.load_states == [
+            assert page.load_states[:2] == [
                 {"state": "load", "timeout": 10000},
                 {"state": "networkidle", "timeout": 10000},
             ]
+            assert page.load_states[2:] == [
+                {"state": "networkidle", "timeout": 5000},
+            ] * 5
             assert [check["timeout"] for check in page.function_checks] == [
+                30000,
+                30000,
+                30000,
+                30000,
                 30000,
                 30000,
                 30000,
@@ -254,6 +326,67 @@ def main() -> None:
                 "inputId": "ConnectionStyle",
                 "minCount": 1,
             }
+            assert [check["arg"] for check in page.function_checks[3:]] == [
+                {"inputId": "ConnectionType", "minCount": 1},
+                {"inputId": "OD", "minCount": 1},
+                {"inputId": "NominalWeight", "minCount": 1},
+                {"inputId": "MaterialGrade", "minCount": 1},
+            ]
+            assert page.evaluate_calls == [
+                {
+                    "inputId": "ConnectionStyle",
+                    "targetText": "Threaded and Coupled",
+                    "matchMode": "text",
+                },
+                {
+                    "inputId": "ConnectionType",
+                    "targetText": "SEAL-LOCK HT",
+                    "matchMode": "text",
+                },
+                {
+                    "inputId": "OD",
+                    "targetText": "5.500",
+                    "matchMode": "numeric",
+                },
+                {
+                    "inputId": "NominalWeight",
+                    "targetText": "17.000",
+                    "matchMode": "numeric",
+                },
+                {
+                    "inputId": "MaterialGrade",
+                    "targetText": "13CR-80",
+                    "matchMode": "material",
+                },
+            ]
+            assert page.wait_timeouts == [1200] * 5
+
+            assert adapter._map_connection_type("SLHT") == "SEAL-LOCK HT"
+            assert adapter._map_connection_type("HT") == "SEAL-LOCK HT"
+            for name in ("SLHT-S", "SLHTS", "HT-S", "HTS"):
+                assert adapter._map_connection_type(name) == "SEAL-LOCK HT-S"
+            try:
+                adapter._map_connection_type("UNKNOWN")
+                raise AssertionError("Expected unsupported HT connection name.")
+            except ValueError:
+                pass
+
+            assert adapter._build_material_grade("13cr", "80.0") == "13CR-80"
+            assert adapter._map_material_grade(build_mapped_data()) == "13CR-80"
+
+            page.selection_failure_input = "OD"
+            try:
+                adapter._select_kendo_dropdown_by_text(
+                    input_id="OD",
+                    target_text="99.000",
+                    match_mode="numeric",
+                )
+                raise AssertionError("Expected HT option selection failure.")
+            except RuntimeError as exc:
+                assert "Failed to select HT dropdown option" in str(exc)
+            page.selection_failure_input = None
+
+            check_repeated_selection(adapter)
         finally:
             adapter.close()
             assert fake_playwright.chromium.browser.context.closed is True
