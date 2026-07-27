@@ -27,7 +27,16 @@ logger = logging.getLogger(__name__)
 class HtAdapter(BaseAdapter):
     """Validate HT mapped data and own the HT browser session."""
 
+    NA = "NA"
+
     CONNECTION_STYLE = "Threaded and Coupled"
+
+    REPORT_SECTION_LABELS = {
+        "Pipe Body Data",
+        "Connection Data",
+        "Operational Data",
+        "Notes",
+    }
 
     REQUIRED_CONNECTION_FIELDS = {
         "name",
@@ -89,7 +98,8 @@ class HtAdapter(BaseAdapter):
         )
         self._click_filter_and_open_report()
         self._wait_for_report_loaded()
-        raise NotImplementedError("HT datasheet extraction is not implemented yet.")
+        self.extract_required_data(mapped_data)
+        raise NotImplementedError("HT blanking report opening is not implemented yet.")
 
     def open_datasheet_page(self) -> None:
         """Open the HT connection datasheet search page."""
@@ -643,6 +653,199 @@ class HtAdapter(BaseAdapter):
         value = re.sub(r"\s+", " ", value)
         value = value.strip().rstrip(":")
         return value.lower()
+
+    def extract_required_data(self, mapped_data: dict[str, Any]) -> dict[str, Any]:
+        connection_data = self._extract_connection_data()
+
+        drift = self.NA
+        if bool(mapped_data.get("drift_extraction")):
+            drift = self._extract_api_drift_diameter()
+
+        return {
+            **connection_data,
+            "drift": drift,
+        }
+
+    def _extract_connection_data(self) -> dict[str, str | None]:
+        return {
+            "tensile": self._extract_report_number(
+                section_label="Connection Data",
+                field_label="Longitudinal Yield Strength",
+            ),
+            "compression": self._extract_report_number(
+                section_label="Connection Data",
+                field_label="Compressive Limit",
+            ),
+            "burst": self._extract_report_number(
+                section_label="Connection Data",
+                field_label="Internal Pressure Rating",
+            ),
+            "collapse": self._extract_report_number(
+                section_label="Connection Data",
+                field_label="External Pressure Rating",
+            ),
+        }
+
+    def _extract_api_drift_diameter(self) -> str | None:
+        return self._extract_report_number(
+            section_label="Pipe Body Data",
+            field_label="API Drift Diameter",
+        )
+
+    def _extract_report_number(
+        self,
+        section_label: str,
+        field_label: str,
+    ) -> str:
+        blocks = self._get_report_text_blocks()
+
+        section_start, section_end = self._find_report_section_bounds(
+            blocks=blocks,
+            section_label=section_label,
+        )
+
+        label_block = self._find_report_label_block(
+            blocks=blocks,
+            section_start=section_start,
+            section_end=section_end,
+            field_label=field_label,
+        )
+
+        value_text = self._find_report_value_for_label(
+            blocks=blocks,
+            label_block=label_block,
+            section_start=section_start,
+            section_end=section_end,
+        )
+
+        number = self._extract_first_number(value_text)
+        if number is None:
+            raise RuntimeError(
+                f"Could not extract numeric value from HT report field. "
+                f"section=[{section_label}], field=[{field_label}], "
+                f"raw_value=[{value_text}]"
+            )
+
+        return number
+
+    def _find_report_section_bounds(
+        self,
+        blocks: list[dict[str, Any]],
+        section_label: str,
+    ) -> tuple[float, float]:
+        target = self._normalize_report_label(section_label)
+
+        section_blocks = [
+            block
+            for block in blocks
+            if self._normalize_report_label(block.get("text")) == target
+        ]
+
+        if not section_blocks:
+            raise RuntimeError(f"HT report section not found: {section_label}")
+
+        section_block = min(
+            section_blocks,
+            key=lambda block: float(block.get("top", 0)),
+        )
+        section_start = float(section_block.get("top", 0))
+
+        all_section_labels = {
+            self._normalize_report_label(label)
+            for label in self.REPORT_SECTION_LABELS
+        }
+
+        next_section_tops = [
+            float(block.get("top", 0))
+            for block in blocks
+            if (
+                self._normalize_report_label(block.get("text"))
+                in all_section_labels
+                and float(block.get("top", 0)) > section_start
+            )
+        ]
+
+        section_end = min(next_section_tops) if next_section_tops else float("inf")
+
+        return section_start, section_end
+
+    def _find_report_label_block(
+        self,
+        blocks: list[dict[str, Any]],
+        section_start: float,
+        section_end: float,
+        field_label: str,
+    ) -> dict[str, Any]:
+        target = self._normalize_report_label(field_label)
+
+        candidates = [
+            block
+            for block in blocks
+            if (
+                section_start <= float(block.get("top", 0)) < section_end
+                and self._normalize_report_label(block.get("text")) == target
+            )
+        ]
+
+        if not candidates:
+            raise RuntimeError(f"HT report field label not found: {field_label}")
+
+        return min(
+            candidates,
+            key=lambda block: (
+                float(block.get("left", 0)),
+                float(block.get("top", 0)),
+            ),
+        )
+
+    def _find_report_value_for_label(
+        self,
+        blocks: list[dict[str, Any]],
+        label_block: dict[str, Any],
+        section_start: float,
+        section_end: float,
+    ) -> str:
+        label_top = float(label_block.get("top", 0))
+        label_left = float(label_block.get("left", 0))
+
+        row_tolerance = 2.0
+
+        candidates = [
+            block
+            for block in blocks
+            if (
+                section_start <= float(block.get("top", 0)) < section_end
+                and abs(float(block.get("top", 0)) - label_top) <= row_tolerance
+                and float(block.get("left", 0)) > label_left + 10
+                and self._extract_first_number(block.get("text")) is not None
+            )
+        ]
+
+        if not candidates:
+            raise RuntimeError(
+                f"HT report value not found for label: {label_block.get('text')}"
+            )
+
+        value_block = min(
+            candidates,
+            key=lambda block: float(block.get("left", 0)),
+        )
+
+        return str(value_block.get("text") or "").strip()
+
+    def _extract_first_number(self, text: Any) -> str | None:
+        if text is None:
+            return None
+
+        value = str(text).strip()
+        if not value:
+            return None
+
+        match = re.search(r"[-+]?(?:\d[\d,]*(?:\.\d+)?|\.\d+)", value)
+        if not match:
+            return None
+
+        return match.group(0)
 
     def _require_page(self) -> Page:
         if self.page is None:

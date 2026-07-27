@@ -17,6 +17,28 @@ if str(ROOT_DIR) not in sys.path:
 from src.adapters.ht_adapter import HtAdapter  # noqa: E402
 
 
+def build_report_blocks() -> list[dict[str, Any]]:
+    return [
+        {"text": "Pipe Body Data", "left": 10, "top": 10},
+        {"text": "API Drift Diameter", "left": 50, "top": 20},
+        {"text": "4.767 in", "left": 200, "top": 20.5},
+        {"text": "Connection Data", "left": 10, "top": 100},
+        {"text": "Longitudinal Yield Strength", "left": 50, "top": 110},
+        {"text": "561,000 lbf", "left": 200, "top": 110},
+        {"text": "999,999 decoy", "left": 300, "top": 110},
+        {"text": "Compressive Limit", "left": 50, "top": 120},
+        {"text": "540,000 lbf", "left": 200, "top": 120},
+        {"text": "Internal Pressure Rating", "left": 50, "top": 130},
+        {"text": "12,345 psi", "left": 200, "top": 130},
+        {"text": "External Pressure Rating", "left": 50, "top": 140},
+        {"text": "10,987 psi", "left": 200, "top": 140},
+        {"text": "Operational Data", "left": 10, "top": 200},
+        {"text": "Longitudinal Yield Strength", "left": 50, "top": 210},
+        {"text": "111,111 out of section", "left": 200, "top": 210},
+        {"text": "Notes", "left": 10, "top": 300},
+    ]
+
+
 class FakePage:
     def __init__(self) -> None:
         self.goto_calls: list[dict[str, Any]] = []
@@ -103,10 +125,7 @@ class FakePage:
 class FakeFrame:
     def __init__(self) -> None:
         self.evaluate_calls: list[str] = []
-        self.report_blocks: list[dict[str, Any]] = [
-            {"text": "Connection Data"},
-            {"text": "Pipe Body Data"},
-        ]
+        self.report_blocks = build_report_blocks()
         self.evaluate_failures = 0
 
     def evaluate(self, script: str) -> list[dict[str, Any]]:
@@ -320,6 +339,24 @@ def check_repeated_report_opening(
         adapter.close()
 
 
+def check_repeated_extraction(adapter: HtAdapter) -> None:
+    """Exercise deterministic report extraction without website traffic."""
+    page = adapter._require_page()
+    start_evaluate_count = len(page.report_frame.evaluate_calls)
+
+    for _ in range(250):
+        result = adapter.extract_required_data(build_mapped_data())
+        assert result == {
+            "tensile": "561,000",
+            "compression": "540,000",
+            "burst": "12,345",
+            "collapse": "10,987",
+            "drift": "4.767",
+        }
+
+    assert len(page.report_frame.evaluate_calls) - start_evaluate_count == 1250
+
+
 def main() -> None:
     with TemporaryDirectory() as tmp_name:
         logs_dir = Path(tmp_name) / "logs"
@@ -384,7 +421,10 @@ def main() -> None:
                 adapter.run(build_mapped_data())
                 raise AssertionError("Expected NotImplementedError for HT automation.")
             except NotImplementedError as exc:
-                assert str(exc) == "HT datasheet extraction is not implemented yet."
+                assert (
+                    str(exc)
+                    == "HT blanking report opening is not implemented yet."
+                )
 
             page = fake_playwright.chromium.browser.context.page
             assert page.goto_calls == [
@@ -493,18 +533,89 @@ def main() -> None:
                     "state": "visible",
                     "timeout": 30000,
                 },
+            ] + [
                 {
                     "selector": "#ReportViewerReportFrame",
                     "state": "attached",
                     "timeout": 30000,
                 },
-                {
-                    "selector": "#ReportViewerReportFrame",
-                    "state": "attached",
-                    "timeout": 30000,
-                },
+            ] * 7
+            assert len(page.report_frame.evaluate_calls) == 6
+
+            assert adapter.extract_required_data(build_mapped_data()) == {
+                "tensile": "561,000",
+                "compression": "540,000",
+                "burst": "12,345",
+                "collapse": "10,987",
+                "drift": "4.767",
+            }
+            no_drift_data = build_mapped_data()
+            no_drift_data["drift_extraction"] = False
+            assert adapter.extract_required_data(no_drift_data) == {
+                "tensile": "561,000",
+                "compression": "540,000",
+                "burst": "12,345",
+                "collapse": "10,987",
+                "drift": "NA",
+            }
+            assert len(page.report_frame.evaluate_calls) == 15
+            assert adapter._normalize_report_label("  Connection\u00a0Data: ") == (
+                "connection data"
+            )
+            assert adapter._extract_first_number("value: -1,234.50 psi") == (
+                "-1,234.50"
+            )
+
+            try:
+                adapter._find_report_section_bounds(
+                    blocks=build_report_blocks(),
+                    section_label="Missing Data",
+                )
+                raise AssertionError("Expected missing HT report section.")
+            except RuntimeError as exc:
+                assert str(exc) == "HT report section not found: Missing Data"
+
+            missing_label_blocks = [
+                block
+                for block in build_report_blocks()
+                if block["text"] != "Compressive Limit"
             ]
-            assert len(page.report_frame.evaluate_calls) == 1
+            try:
+                adapter._find_report_label_block(
+                    blocks=missing_label_blocks,
+                    section_start=100,
+                    section_end=200,
+                    field_label="Compressive Limit",
+                )
+                raise AssertionError("Expected missing HT report field label.")
+            except RuntimeError as exc:
+                assert str(exc) == (
+                    "HT report field label not found: Compressive Limit"
+                )
+
+            external_label = next(
+                block
+                for block in build_report_blocks()
+                if block["text"] == "External Pressure Rating"
+            )
+            blocks_without_external_value = [
+                block
+                for block in build_report_blocks()
+                if block["text"] != "10,987 psi"
+            ]
+            try:
+                adapter._find_report_value_for_label(
+                    blocks=blocks_without_external_value,
+                    label_block=external_label,
+                    section_start=100,
+                    section_end=200,
+                )
+                raise AssertionError("Expected missing HT report value.")
+            except RuntimeError as exc:
+                assert str(exc) == (
+                    "HT report value not found for label: "
+                    "External Pressure Rating"
+                )
 
             assert adapter._map_connection_type("SLHT") == "SEAL-LOCK HT"
             assert adapter._map_connection_type("HT") == "SEAL-LOCK HT"
@@ -532,6 +643,7 @@ def main() -> None:
             page.selection_failure_input = None
 
             check_repeated_selection(adapter)
+            check_repeated_extraction(adapter)
         finally:
             adapter.close()
             assert fake_playwright.chromium.browser.context.closed is True
