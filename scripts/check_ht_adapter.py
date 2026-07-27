@@ -1,4 +1,4 @@
-"""Smoke checks for the HT adapter datasheet selection flow."""
+"""Smoke checks for the HT adapter report-opening flow."""
 
 from __future__ import annotations
 
@@ -24,6 +24,17 @@ class FakePage:
         self.function_checks: list[dict[str, Any]] = []
         self.evaluate_calls: list[dict[str, Any]] = []
         self.wait_timeouts: list[int] = []
+        self.locator_waits: list[dict[str, Any]] = []
+        self.locator_clicks: list[str] = []
+        self.locator_attributes: dict[tuple[str, str], str | None] = {
+            (
+                "#MasterDataGrid a.k-button[href*='/ConnectorSheets/GenerateReport/']:has-text('View Datasheet')",
+                "href",
+            ): "/ConnectorSheets/GenerateReport/123",
+        }
+        self.report_frame = FakeFrame()
+        self.report_frame_handle_available = True
+        self.report_content_frame_available = True
         self.timeout = None
         self.navigation_timeout = None
         self.goto_timeout = False
@@ -84,6 +95,67 @@ class FakePage:
 
     def wait_for_timeout(self, timeout: int) -> None:
         self.wait_timeouts.append(timeout)
+
+    def locator(self, selector: str) -> "FakeLocator":
+        return FakeLocator(self, selector)
+
+
+class FakeFrame:
+    def __init__(self) -> None:
+        self.evaluate_calls: list[str] = []
+        self.report_blocks: list[dict[str, Any]] = [
+            {"text": "Connection Data"},
+            {"text": "Pipe Body Data"},
+        ]
+        self.evaluate_failures = 0
+
+    def evaluate(self, script: str) -> list[dict[str, Any]]:
+        assert 'document.querySelectorAll("div[data-id]")' in script
+        self.evaluate_calls.append(script)
+        if self.evaluate_failures:
+            self.evaluate_failures -= 1
+            raise RuntimeError("fake report frame not ready")
+        return self.report_blocks
+
+
+class FakeElementHandle:
+    def __init__(self, page: FakePage) -> None:
+        self.page = page
+
+    def content_frame(self) -> FakeFrame | None:
+        if not self.page.report_content_frame_available:
+            return None
+        return self.page.report_frame
+
+
+class FakeLocator:
+    def __init__(self, page: FakePage, selector: str) -> None:
+        self.page = page
+        self.selector = selector
+
+    @property
+    def first(self) -> "FakeLocator":
+        return self
+
+    def wait_for(self, state: str, timeout: int) -> None:
+        self.page.locator_waits.append(
+            {
+                "selector": self.selector,
+                "state": state,
+                "timeout": timeout,
+            }
+        )
+
+    def click(self) -> None:
+        self.page.locator_clicks.append(self.selector)
+
+    def get_attribute(self, name: str) -> str | None:
+        return self.page.locator_attributes.get((self.selector, name))
+
+    def element_handle(self) -> FakeElementHandle | None:
+        if not self.page.report_frame_handle_available:
+            return None
+        return FakeElementHandle(self.page)
 
 
 class FakeContext:
@@ -224,6 +296,30 @@ def check_repeated_selection(adapter: HtAdapter) -> None:
     ]
 
 
+def check_repeated_report_opening(
+    logs_dir: Path,
+) -> None:
+    """Exercise deterministic report opening without website traffic."""
+    fake_playwright = FakePlaywright()
+    adapter = build_adapter(logs_dir, fake_playwright)
+    page = fake_playwright.chromium.browser.context.page
+
+    try:
+        for _ in range(250):
+            adapter._click_filter_and_open_report()
+            adapter._wait_for_report_loaded()
+
+        assert len(page.locator_clicks) == 250
+        assert len(page.goto_calls) == 250
+        assert page.goto_calls[-1]["url"] == (
+            "https://datasheet.hunting-intl.com"
+            "/ConnectorSheets/GenerateReport/123"
+        )
+        assert len(page.report_frame.evaluate_calls) == 250
+    finally:
+        adapter.close()
+
+
 def main() -> None:
     with TemporaryDirectory() as tmp_name:
         logs_dir = Path(tmp_name) / "logs"
@@ -288,7 +384,7 @@ def main() -> None:
                 adapter.run(build_mapped_data())
                 raise AssertionError("Expected NotImplementedError for HT automation.")
             except NotImplementedError as exc:
-                assert str(exc) == "HT report opening is not implemented yet."
+                assert str(exc) == "HT datasheet extraction is not implemented yet."
 
             page = fake_playwright.chromium.browser.context.page
             assert page.goto_calls == [
@@ -298,7 +394,15 @@ def main() -> None:
                     ),
                     "wait_until": "domcontentloaded",
                     "timeout": 5678,
-                }
+                },
+                {
+                    "url": (
+                        "https://datasheet.hunting-intl.com"
+                        "/ConnectorSheets/GenerateReport/123"
+                    ),
+                    "wait_until": "domcontentloaded",
+                    "timeout": 5678,
+                },
             ]
             assert page.load_states[:2] == [
                 {"state": "load", "timeout": 10000},
@@ -306,8 +410,13 @@ def main() -> None:
             ]
             assert page.load_states[2:] == [
                 {"state": "networkidle", "timeout": 5000},
-            ] * 5
+            ] * 5 + [
+                {"state": "load", "timeout": 10000},
+                {"state": "networkidle", "timeout": 10000},
+            ]
             assert [check["timeout"] for check in page.function_checks] == [
+                30000,
+                30000,
                 30000,
                 30000,
                 30000,
@@ -331,7 +440,13 @@ def main() -> None:
                 {"inputId": "OD", "minCount": 1},
                 {"inputId": "NominalWeight", "minCount": 1},
                 {"inputId": "MaterialGrade", "minCount": 1},
+                None,
+                None,
             ]
+            assert "#result-grid" in page.function_checks[7]["script"]
+            assert "/ConnectorSheets/GenerateReport/" in (
+                page.function_checks[8]["script"]
+            )
             assert page.evaluate_calls == [
                 {
                     "inputId": "ConnectionStyle",
@@ -360,6 +475,36 @@ def main() -> None:
                 },
             ]
             assert page.wait_timeouts == [1200] * 5
+            assert page.locator_clicks == [
+                "#searchtable a.k-button:has-text('Filter')"
+            ]
+            assert page.locator_waits == [
+                {
+                    "selector": "#searchtable a.k-button:has-text('Filter')",
+                    "state": "visible",
+                    "timeout": 15000,
+                },
+                {
+                    "selector": (
+                        "#MasterDataGrid a.k-button"
+                        "[href*='/ConnectorSheets/GenerateReport/']"
+                        ":has-text('View Datasheet')"
+                    ),
+                    "state": "visible",
+                    "timeout": 30000,
+                },
+                {
+                    "selector": "#ReportViewerReportFrame",
+                    "state": "attached",
+                    "timeout": 30000,
+                },
+                {
+                    "selector": "#ReportViewerReportFrame",
+                    "state": "attached",
+                    "timeout": 30000,
+                },
+            ]
+            assert len(page.report_frame.evaluate_calls) == 1
 
             assert adapter._map_connection_type("SLHT") == "SEAL-LOCK HT"
             assert adapter._map_connection_type("HT") == "SEAL-LOCK HT"
@@ -417,6 +562,45 @@ def main() -> None:
         ]
         timeout_adapter.close()
 
+        missing_href_playwright = FakePlaywright()
+        missing_href_adapter = build_adapter(logs_dir, missing_href_playwright)
+        missing_href_page = missing_href_playwright.chromium.browser.context.page
+        missing_href_page.locator_attributes.clear()
+        try:
+            missing_href_adapter._click_filter_and_open_report()
+            raise AssertionError("Expected missing HT datasheet href failure.")
+        except RuntimeError as exc:
+            assert str(exc) == "HT View Datasheet link found but href is empty."
+        missing_href_adapter.close()
+
+        retry_playwright = FakePlaywright()
+        retry_adapter = build_adapter(logs_dir, retry_playwright)
+        retry_page = retry_playwright.chromium.browser.context.page
+        retry_page.report_frame.evaluate_failures = 1
+        retry_adapter._wait_for_report_loaded()
+        assert retry_page.wait_timeouts == [1000]
+        retry_adapter.close()
+
+        incomplete_report_playwright = FakePlaywright()
+        incomplete_report_adapter = build_adapter(
+            logs_dir,
+            incomplete_report_playwright,
+        )
+        incomplete_report_page = (
+            incomplete_report_playwright.chromium.browser.context.page
+        )
+        incomplete_report_page.report_frame.report_blocks = [
+            {"text": "Connection Data"},
+        ]
+        try:
+            incomplete_report_adapter._wait_for_report_loaded()
+            raise AssertionError("Expected incomplete HT report failure.")
+        except RuntimeError as exc:
+            assert str(exc) == "HT report content did not finish loading."
+        assert incomplete_report_page.wait_timeouts == [1000] * 45
+        incomplete_report_adapter.close()
+
+        check_repeated_report_opening(logs_dir)
         check_repeated_lifecycle(logs_dir)
 
     print("ht adapter ok")

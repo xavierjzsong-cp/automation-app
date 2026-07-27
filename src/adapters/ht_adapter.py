@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import logging
+import re
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
+from urllib.parse import urljoin
 
 from playwright.sync_api import (
     Browser,
@@ -85,7 +87,9 @@ class HtAdapter(BaseAdapter):
             weight_value=str(connection["weight"]).strip(),
             material_grade=material_grade,
         )
-        raise NotImplementedError("HT report opening is not implemented yet.")
+        self._click_filter_and_open_report()
+        self._wait_for_report_loaded()
+        raise NotImplementedError("HT datasheet extraction is not implemented yet.")
 
     def open_datasheet_page(self) -> None:
         """Open the HT connection datasheet search page."""
@@ -473,6 +477,172 @@ class HtAdapter(BaseAdapter):
             page.wait_for_load_state("networkidle", timeout=5000)
         except PlaywrightTimeoutError:
             pass
+
+    def _click_filter_and_open_report(self) -> None:
+        page = self._require_page()
+        logger.info("Clicking HT Filter button")
+
+        filter_button = page.locator(
+            "#searchtable a.k-button:has-text('Filter')"
+        ).first
+
+        filter_button.wait_for(state="visible", timeout=15000)
+        filter_button.click()
+
+        self._wait_for_result_grid_loaded()
+
+        view_datasheet = page.locator(
+            "#MasterDataGrid a.k-button[href*='/ConnectorSheets/GenerateReport/']:has-text('View Datasheet')"
+        ).first
+
+        view_datasheet.wait_for(state="visible", timeout=30000)
+
+        href = view_datasheet.get_attribute("href")
+        if not href:
+            raise RuntimeError("HT View Datasheet link found but href is empty.")
+
+        report_url = urljoin(self.base_url, href)
+
+        logger.info("Opening HT report page: %s", report_url)
+
+        self._goto_page(report_url)
+
+        page.wait_for_function(
+            """
+            () => {
+                return window.location.href.includes("/ConnectorSheets/GenerateReport/");
+            }
+            """,
+            timeout=30000,
+        )
+
+    def _wait_for_result_grid_loaded(self) -> None:
+        page = self._require_page()
+        logger.info("Waiting for HT result grid to load")
+
+        page.wait_for_function(
+            """
+            () => {
+                const grid = document.querySelector("#result-grid");
+                const masterGrid = document.querySelector("#MasterDataGrid");
+
+                if (!grid || !masterGrid) return false;
+
+                const gridStyle = window.getComputedStyle(grid);
+                if (gridStyle.display === "none" || gridStyle.visibility === "hidden") {
+                    return false;
+                }
+
+                const viewLink = masterGrid.querySelector(
+                    "a[href*='/ConnectorSheets/GenerateReport/']"
+                );
+
+                return Boolean(viewLink);
+            }
+            """,
+            timeout=30000,
+        )
+
+    def _wait_for_report_loaded(self) -> None:
+        page = self._require_page()
+        logger.info("Waiting for HT report iframe content to load")
+
+        page.locator("#ReportViewerReportFrame").wait_for(
+            state="attached",
+            timeout=30000,
+        )
+
+        for _ in range(45):
+            try:
+                blocks = self._get_report_text_blocks()
+                texts = {
+                    self._normalize_report_label(block.get("text"))
+                    for block in blocks
+                }
+
+                if (
+                    self._normalize_report_label("Connection Data") in texts
+                    and self._normalize_report_label("Pipe Body Data") in texts
+                ):
+                    return
+
+            except Exception:
+                pass
+
+            page.wait_for_timeout(1000)
+
+        raise RuntimeError("HT report content did not finish loading.")
+
+    def _get_report_frame(self) -> Any:
+        page = self._require_page()
+        iframe = page.locator("#ReportViewerReportFrame")
+        iframe.wait_for(state="attached", timeout=30000)
+
+        iframe_handle = iframe.element_handle()
+        if iframe_handle is None:
+            raise RuntimeError("HT ReportViewerReportFrame element handle not found.")
+
+        frame = iframe_handle.content_frame()
+        if frame is None:
+            raise RuntimeError("HT ReportViewerReportFrame content frame not found.")
+
+        return frame
+
+    def _get_report_text_blocks(self) -> list[dict[str, Any]]:
+        frame = self._get_report_frame()
+
+        return frame.evaluate(
+            """
+            () => {
+                const parsePx = (styleText, name) => {
+                    const regex = new RegExp(name + "\\\\s*:\\\\s*(-?\\\\d+(?:\\\\.\\\\d+)?)px", "i");
+                    const match = String(styleText || "").match(regex);
+                    return match ? Number(match[1]) : null;
+                };
+
+                const normalize = (value) => {
+                    return String(value || "")
+                        .replace(/\\u00a0/g, " ")
+                        .replace(/\\s+/g, " ")
+                        .trim();
+                };
+
+                const nodes = Array.from(document.querySelectorAll("div[data-id]"));
+
+                return nodes
+                    .map((el) => {
+                        const styleText = el.getAttribute("style") || "";
+                        const text = normalize(el.innerText || el.textContent || "");
+
+                        const left = parsePx(styleText, "left");
+                        const top = parsePx(styleText, "top");
+                        const width = parsePx(styleText, "width");
+                        const height = parsePx(styleText, "height");
+
+                        if (!text || left === null || top === null) {
+                            return null;
+                        }
+
+                        return {
+                            id: el.getAttribute("data-id") || "",
+                            text,
+                            left,
+                            top,
+                            width: width || 0,
+                            height: height || 0,
+                        };
+                    })
+                    .filter(Boolean);
+            }
+            """
+        )
+
+    def _normalize_report_label(self, text: Any) -> str:
+        value = str(text or "")
+        value = value.replace("\u00a0", " ")
+        value = re.sub(r"\s+", " ", value)
+        value = value.strip().rstrip(":")
+        return value.lower()
 
     def _require_page(self) -> Page:
         if self.page is None:
