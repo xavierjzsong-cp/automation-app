@@ -86,7 +86,7 @@ src/adapters/base_adapter.py
     Shared interface for partner website adapters.
 
 src/adapters/ht_adapter.py
-    HT adapter with mapped-data validation, Playwright browser lifecycle management, Kendo search selection, datasheet extraction, and blanking report opening/readiness.
+    HT adapter with mapped-data validation, Playwright browser lifecycle management, Kendo search selection, datasheet extraction, blanking report opening, and blanking OD/ID extraction.
 
 src/adapters/jfe_adapter.py
     JFE adapter with mapped-data validation, Playwright browser lifecycle management, datasheet/blanking page navigation, selection, and extraction.
@@ -110,7 +110,7 @@ scripts/check_ht_mapper.py
     Smoke and repeatability check for HT mapper formatting and validation behavior.
 
 scripts/check_ht_adapter.py
-    Smoke and repeatability check for HT adapter selection, datasheet/blanking report opening, iframe readiness, datasheet extraction, failures, mapping, timeouts, validation, and replaceable browser lifecycle management.
+    Smoke and repeatability check for HT adapter selection, report opening, datasheet and blanking OD/ID extraction, iframe readiness, failures, mapping, timeouts, validation, and replaceable browser lifecycle management.
 
 scripts/check_jfe_adapter.py
     Smoke check for JFE adapter browser lifecycle, datasheet/blanking selection and extraction, BOX/PIN dimensions, grade construction, repeatability, failure handling, and mapped-data validation.

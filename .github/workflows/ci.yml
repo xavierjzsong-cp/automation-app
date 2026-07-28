@@ -72,7 +72,7 @@ jobs:
         shell: pwsh
         run: python scripts/check_ht_mapper.py
 
-      - name: Check HT adapter blanking report opening
+      - name: Check HT adapter blanking diameter extraction
         shell: pwsh
         run: python scripts/check_ht_adapter.py
 

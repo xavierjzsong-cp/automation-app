@@ -44,6 +44,18 @@ def build_blanking_report_blocks() -> list[dict[str, Any]]:
         {"text": "ACCESSORY BLANKING DIMENSIONS", "left": 10, "top": 10},
         {"text": "ACCESSORY PIN", "left": 10, "top": 20},
         {"text": "ACCESSORY BOX", "left": 10, "top": 30},
+        {"text": "Tolerance", "left": 159, "top": 100},
+        {"text": "±0.010", "left": 159, "top": 110},
+        {"text": "4.321 in", "left": 159, "top": 120},
+        {"text": "Tolerance", "left": 216, "top": 100},
+        {"text": "+0.015 / -0.007", "left": 216, "top": 110},
+        {"text": "6.125 in", "left": 216, "top": 120},
+        {"text": "Tolerance", "left": 562, "top": 100},
+        {"text": "±0.012", "left": 562, "top": 110},
+        {"text": "4.601 in", "left": 562, "top": 120},
+        {"text": "Tolerance", "left": 619, "top": 100},
+        {"text": "+0.014 / -0.008", "left": 619, "top": 110},
+        {"text": "5.901 in", "left": 619, "top": 120},
     ]
 
 
@@ -396,6 +408,34 @@ def check_repeated_blanking_report_opening(
         adapter.close()
 
 
+def check_repeated_blanking_diameter_extraction(
+    logs_dir: Path,
+) -> None:
+    """Exercise deterministic blanking diameter extraction."""
+    fake_playwright = FakePlaywright()
+    adapter = build_adapter(logs_dir, fake_playwright)
+    page = fake_playwright.chromium.browser.context.page
+    page.report_frame.report_blocks = build_blanking_report_blocks()
+
+    try:
+        for index in range(250):
+            mapped_data = build_mapped_data()
+            mapped_data["connection"]["type"] = (
+                "PIN" if index % 2 == 0 else "BOX"
+            )
+            result = adapter.extract_blanking_diameters(mapped_data)
+            if mapped_data["connection"]["type"] == "PIN":
+                assert result["id"]["nominal"] == "4.321"
+                assert result["od"]["nominal"] == "6.125"
+            else:
+                assert result["id"]["nominal"] == "4.601"
+                assert result["od"]["nominal"] == "5.901"
+
+        assert len(page.report_frame.evaluate_calls) == 250
+    finally:
+        adapter.close()
+
+
 def main() -> None:
     with TemporaryDirectory() as tmp_name:
         logs_dir = Path(tmp_name) / "logs"
@@ -462,7 +502,7 @@ def main() -> None:
             except NotImplementedError as exc:
                 assert (
                     str(exc)
-                    == "HT blanking extraction is not implemented yet."
+                    == "HT blanking length extraction is not implemented yet."
                 )
 
             page = fake_playwright.chromium.browser.context.page
@@ -608,8 +648,8 @@ def main() -> None:
                     "state": "attached",
                     "timeout": 30000,
                 },
-            ] * 3
-            assert len(page.report_frame.evaluate_calls) == 7
+            ] * 4
+            assert len(page.report_frame.evaluate_calls) == 8
 
             page.report_frame.report_blocks = build_report_blocks()
             assert adapter.extract_required_data(build_mapped_data()) == {
@@ -628,7 +668,7 @@ def main() -> None:
                 "collapse": "10,987",
                 "drift": "NA",
             }
-            assert len(page.report_frame.evaluate_calls) == 16
+            assert len(page.report_frame.evaluate_calls) == 17
             assert adapter._normalize_report_label("  Connection\u00a0Data: ") == (
                 "connection data"
             )
@@ -687,6 +727,90 @@ def main() -> None:
                     "External Pressure Rating"
                 )
 
+            page.report_frame.report_blocks = build_blanking_report_blocks()
+            box_result = adapter.extract_blanking_diameters(build_mapped_data())
+            assert box_result == {
+                "od": {
+                    "nominal": "5.901",
+                    "tol_1": "+0.014",
+                    "tol_2": "-0.008",
+                },
+                "id": {
+                    "nominal": "4.601",
+                    "tol_1": "+0.012",
+                    "tol_2": "-0.012",
+                },
+            }
+            pin_data = build_mapped_data()
+            pin_data["connection"]["type"] = "pin"
+            assert adapter.extract_blanking_diameters(pin_data) == {
+                "od": {
+                    "nominal": "6.125",
+                    "tol_1": "+0.015",
+                    "tol_2": "-0.007",
+                },
+                "id": {
+                    "nominal": "4.321",
+                    "tol_1": "+0.010",
+                    "tol_2": "-0.010",
+                },
+            }
+            assert len(page.report_frame.evaluate_calls) == 19
+            assert adapter._split_blanking_tolerance(" ± 0.025 ") == (
+                "+0.025",
+                "-0.025",
+            )
+            assert adapter._split_blanking_tolerance("+.010 / -.005") == (
+                "+.010",
+                "-.005",
+            )
+
+            unsupported_blanking_data = build_mapped_data()
+            unsupported_blanking_data["connection"]["type"] = "COUPLING"
+            try:
+                adapter.extract_blanking_diameters(
+                    unsupported_blanking_data
+                )
+                raise AssertionError("Expected unsupported HT blanking type.")
+            except ValueError as exc:
+                assert "only supports PIN or BOX" in str(exc)
+
+            try:
+                adapter._get_blocks_by_left([], column_left=999)
+                raise AssertionError("Expected missing HT blanking column.")
+            except RuntimeError as exc:
+                assert str(exc) == (
+                    "No HT report blocks found for column_left=999"
+                )
+
+            try:
+                adapter._find_column_tolerance_label_block(
+                    [{"text": "Value", "left": 159, "top": 100}]
+                )
+                raise AssertionError("Expected missing tolerance label.")
+            except RuntimeError as exc:
+                assert "HT blanking tolerance label not found" in str(exc)
+
+            try:
+                adapter._extract_blanking_dimension_by_column(
+                    blocks=[
+                        {"text": "Tolerance", "left": 159, "top": 100},
+                        {"text": "±0.010", "left": 159, "top": 110},
+                        {"text": "not available", "left": 159, "top": 120},
+                    ],
+                    column_left=159,
+                )
+                raise AssertionError("Expected invalid HT blanking nominal.")
+            except RuntimeError as exc:
+                assert "Could not extract HT blanking nominal value" in str(exc)
+
+            for tolerance_text in ("", "0.010"):
+                try:
+                    adapter._split_blanking_tolerance(tolerance_text)
+                    raise AssertionError("Expected invalid blanking tolerance.")
+                except RuntimeError:
+                    pass
+
             assert adapter._map_connection_type("SLHT") == "SEAL-LOCK HT"
             assert adapter._map_connection_type("HT") == "SEAL-LOCK HT"
             for name in ("SLHT-S", "SLHTS", "HT-S", "HTS"):
@@ -713,6 +837,7 @@ def main() -> None:
             page.selection_failure_input = None
 
             check_repeated_selection(adapter)
+            page.report_frame.report_blocks = build_report_blocks()
             check_repeated_extraction(adapter)
         finally:
             adapter.close()
@@ -847,6 +972,7 @@ def main() -> None:
 
         check_repeated_report_opening(logs_dir)
         check_repeated_blanking_report_opening(logs_dir)
+        check_repeated_blanking_diameter_extraction(logs_dir)
         check_repeated_lifecycle(logs_dir)
 
     print("ht adapter ok")

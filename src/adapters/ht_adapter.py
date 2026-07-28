@@ -38,6 +38,21 @@ class HtAdapter(BaseAdapter):
         "Notes",
     }
 
+    BLANKING_COLUMNS = {
+        "PIN": {
+            "id": 159.0,
+            "od": 216.0,
+            "internal_length": [274.0, 331.0],
+            "external_length": [389.0, 446.0],
+        },
+        "BOX": {
+            "id": 562.0,
+            "od": 619.0,
+            "internal_length": [735.0, 792.0],
+            "external_length": [850.0, 907.0],
+        },
+    }
+
     REQUIRED_CONNECTION_FIELDS = {
         "name",
         "od",
@@ -101,7 +116,10 @@ class HtAdapter(BaseAdapter):
         self.extract_required_data(mapped_data)
         self._open_blanking_sheet_from_datasheet()
         self._wait_for_blanking_report_loaded()
-        raise NotImplementedError("HT blanking extraction is not implemented yet.")
+        self.extract_blanking_diameters(mapped_data)
+        raise NotImplementedError(
+            "HT blanking length extraction is not implemented yet."
+        )
 
     def open_datasheet_page(self) -> None:
         """Open the HT connection datasheet search page."""
@@ -916,6 +934,174 @@ class HtAdapter(BaseAdapter):
             return None
 
         return match.group(0)
+
+    def extract_blanking_diameters(
+        self,
+        mapped_data: dict[str, Any],
+    ) -> dict[str, dict[str, str]]:
+        connection = mapped_data.get("connection") or {}
+        connection_type = (connection.get("type") or "").upper().strip()
+
+        if connection_type not in self.BLANKING_COLUMNS:
+            raise ValueError(
+                "HT blanking extraction only supports PIN or BOX connection type. "
+                f"Got: {connection.get('type')}"
+            )
+
+        blocks = self._get_report_text_blocks()
+        columns = self.BLANKING_COLUMNS[connection_type]
+
+        od = self._extract_blanking_dimension_by_column(
+            blocks=blocks,
+            column_left=columns["od"],
+        )
+        id_value = self._extract_blanking_dimension_by_column(
+            blocks=blocks,
+            column_left=columns["id"],
+        )
+
+        logger.info(
+            "Extracted HT blanking diameters for %s: od=%s, id=%s",
+            connection_type,
+            od,
+            id_value,
+        )
+
+        return {
+            "od": od,
+            "id": id_value,
+        }
+
+    def _extract_blanking_dimension_by_column(
+        self,
+        blocks: list[dict[str, Any]],
+        column_left: float,
+    ) -> dict[str, str]:
+        tolerance_text, nominal_text = (
+            self._extract_blanking_column_tolerance_and_value(
+                blocks=blocks,
+                column_left=column_left,
+            )
+        )
+
+        tol_1, tol_2 = self._split_blanking_tolerance(tolerance_text)
+
+        nominal = self._extract_first_number(nominal_text)
+        if nominal is None:
+            raise RuntimeError(
+                f"Could not extract HT blanking nominal value. "
+                f"column_left={column_left}, raw_value={nominal_text}"
+            )
+
+        return {
+            "nominal": nominal,
+            "tol_1": tol_1,
+            "tol_2": tol_2,
+        }
+
+    def _extract_blanking_column_tolerance_and_value(
+        self,
+        blocks: list[dict[str, Any]],
+        column_left: float,
+    ) -> tuple[str, str]:
+        column_blocks = self._get_blocks_by_left(
+            blocks=blocks,
+            column_left=column_left,
+        )
+
+        tolerance_label = self._find_column_tolerance_label_block(column_blocks)
+
+        blocks_after_label = [
+            block
+            for block in column_blocks
+            if float(block.get("top", 0))
+            > float(tolerance_label.get("top", 0))
+        ]
+
+        if len(blocks_after_label) < 2:
+            raise RuntimeError(
+                f"Not enough HT blanking column blocks after tolerance label. "
+                f"column_left={column_left}, blocks={column_blocks}"
+            )
+
+        tolerance_block = blocks_after_label[0]
+        value_block = blocks_after_label[1]
+
+        return (
+            str(tolerance_block.get("text") or "").strip(),
+            str(value_block.get("text") or "").strip(),
+        )
+
+    def _get_blocks_by_left(
+        self,
+        blocks: list[dict[str, Any]],
+        column_left: float,
+        tolerance: float = 3.0,
+    ) -> list[dict[str, Any]]:
+        column_blocks = [
+            block
+            for block in blocks
+            if abs(float(block.get("left", 0)) - column_left) <= tolerance
+        ]
+
+        column_blocks = sorted(
+            column_blocks,
+            key=lambda block: float(block.get("top", 0)),
+        )
+
+        if not column_blocks:
+            raise RuntimeError(
+                f"No HT report blocks found for column_left={column_left}"
+            )
+
+        return column_blocks
+
+    def _find_column_tolerance_label_block(
+        self,
+        column_blocks: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        candidates = [
+            block
+            for block in column_blocks
+            if self._normalize_report_label(block.get("text")) == "tolerance"
+        ]
+
+        if not candidates:
+            raise RuntimeError(
+                "HT blanking tolerance label not found in column blocks: "
+                f"{column_blocks}"
+            )
+
+        return min(
+            candidates,
+            key=lambda block: float(block.get("top", 0)),
+        )
+
+    def _split_blanking_tolerance(self, tolerance_text: str) -> tuple[str, str]:
+        text = str(tolerance_text or "").strip()
+        text = text.replace("\u00a0", " ")
+        text = re.sub(r"\s+", "", text)
+
+        if not text:
+            raise RuntimeError("Empty HT blanking tolerance text.")
+
+        if text.startswith("±"):
+            number = text[1:].strip()
+            if not number:
+                raise RuntimeError(
+                    f"Invalid HT blanking tolerance: {tolerance_text}"
+                )
+
+            return f"+{number}", f"-{number}"
+
+        parts = re.findall(r"[+-](?:\d+(?:\.\d+)?|\.\d+)", text)
+
+        if len(parts) >= 2:
+            return parts[0], parts[1]
+
+        raise RuntimeError(
+            f"Unsupported HT blanking tolerance format: {tolerance_text}"
+        )
 
     def _require_page(self) -> Page:
         if self.page is None:
