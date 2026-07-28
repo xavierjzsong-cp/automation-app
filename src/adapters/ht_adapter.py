@@ -99,7 +99,9 @@ class HtAdapter(BaseAdapter):
         self._click_filter_and_open_report()
         self._wait_for_report_loaded()
         self.extract_required_data(mapped_data)
-        raise NotImplementedError("HT blanking report opening is not implemented yet.")
+        self._open_blanking_sheet_from_datasheet()
+        self._wait_for_blanking_report_loaded()
+        raise NotImplementedError("HT blanking extraction is not implemented yet.")
 
     def open_datasheet_page(self) -> None:
         """Open the HT connection datasheet search page."""
@@ -553,6 +555,40 @@ class HtAdapter(BaseAdapter):
             timeout=30000,
         )
 
+    def _open_blanking_sheet_from_datasheet(self) -> None:
+        page = self._require_page()
+        logger.info("Opening HT blanking sheet from connector sheet page")
+
+        blanking_sheet_link = page.locator(
+            "a.k-button[href*='/BlankingSheets/GenerateReport/']:has-text('View Blanking Sheet')"
+        ).first
+
+        blanking_sheet_link.wait_for(state="visible", timeout=30000)
+
+        href = blanking_sheet_link.get_attribute("href")
+        if not href:
+            raise RuntimeError("HT View Blanking Sheet link found but href is empty.")
+
+        blanking_url = urljoin(self.base_url, href)
+
+        logger.info("Opening HT blanking sheet page: %s", blanking_url)
+
+        self._goto_page(blanking_url)
+
+        page.wait_for_function(
+            """
+            () => {
+                return window.location.href.includes("/BlankingSheets/GenerateReport/");
+            }
+            """,
+            timeout=30000,
+        )
+
+        page.locator("#ReportViewerReportFrame").wait_for(
+            state="attached",
+            timeout=30000,
+        )
+
     def _wait_for_report_loaded(self) -> None:
         page = self._require_page()
         logger.info("Waiting for HT report iframe content to load")
@@ -582,6 +618,40 @@ class HtAdapter(BaseAdapter):
             page.wait_for_timeout(1000)
 
         raise RuntimeError("HT report content did not finish loading.")
+
+    def _wait_for_blanking_report_loaded(self) -> None:
+        page = self._require_page()
+        logger.info("Waiting for HT blanking report iframe content to load")
+
+        page.locator("#ReportViewerReportFrame").wait_for(
+            state="attached",
+            timeout=30000,
+        )
+
+        for _ in range(45):
+            try:
+                blocks = self._get_report_text_blocks()
+                texts = {
+                    self._normalize_report_label(block.get("text"))
+                    for block in blocks
+                }
+
+                if (
+                    self._normalize_report_label(
+                        "ACCESSORY BLANKING DIMENSIONS"
+                    )
+                    in texts
+                    and self._normalize_report_label("ACCESSORY PIN") in texts
+                    and self._normalize_report_label("ACCESSORY BOX") in texts
+                ):
+                    return
+
+            except Exception:
+                pass
+
+            page.wait_for_timeout(1000)
+
+        raise RuntimeError("HT blanking report content did not finish loading.")
 
     def _get_report_frame(self) -> Any:
         page = self._require_page()

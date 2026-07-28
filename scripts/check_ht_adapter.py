@@ -39,6 +39,14 @@ def build_report_blocks() -> list[dict[str, Any]]:
     ]
 
 
+def build_blanking_report_blocks() -> list[dict[str, Any]]:
+    return [
+        {"text": "ACCESSORY BLANKING DIMENSIONS", "left": 10, "top": 10},
+        {"text": "ACCESSORY PIN", "left": 10, "top": 20},
+        {"text": "ACCESSORY BOX", "left": 10, "top": 30},
+    ]
+
+
 class FakePage:
     def __init__(self) -> None:
         self.goto_calls: list[dict[str, Any]] = []
@@ -53,6 +61,10 @@ class FakePage:
                 "#MasterDataGrid a.k-button[href*='/ConnectorSheets/GenerateReport/']:has-text('View Datasheet')",
                 "href",
             ): "/ConnectorSheets/GenerateReport/123",
+            (
+                "a.k-button[href*='/BlankingSheets/GenerateReport/']:has-text('View Blanking Sheet')",
+                "href",
+            ): "/BlankingSheets/GenerateReport/456",
         }
         self.report_frame = FakeFrame()
         self.report_frame_handle_available = True
@@ -79,6 +91,10 @@ class FakePage:
         )
         if self.goto_timeout:
             raise PlaywrightTimeoutError("fake navigation timeout")
+        if "/ConnectorSheets/GenerateReport/" in url:
+            self.report_frame.report_blocks = build_report_blocks()
+        if "/BlankingSheets/GenerateReport/" in url:
+            self.report_frame.report_blocks = build_blanking_report_blocks()
 
     def wait_for_load_state(self, state: str, timeout: int) -> None:
         self.load_states.append({"state": state, "timeout": timeout})
@@ -357,6 +373,29 @@ def check_repeated_extraction(adapter: HtAdapter) -> None:
     assert len(page.report_frame.evaluate_calls) - start_evaluate_count == 1250
 
 
+def check_repeated_blanking_report_opening(
+    logs_dir: Path,
+) -> None:
+    """Exercise deterministic blanking report opening without website traffic."""
+    fake_playwright = FakePlaywright()
+    adapter = build_adapter(logs_dir, fake_playwright)
+    page = fake_playwright.chromium.browser.context.page
+
+    try:
+        for _ in range(250):
+            adapter._open_blanking_sheet_from_datasheet()
+            adapter._wait_for_blanking_report_loaded()
+
+        assert len(page.goto_calls) == 250
+        assert page.goto_calls[-1]["url"] == (
+            "https://datasheet.hunting-intl.com"
+            "/BlankingSheets/GenerateReport/456"
+        )
+        assert len(page.report_frame.evaluate_calls) == 250
+    finally:
+        adapter.close()
+
+
 def main() -> None:
     with TemporaryDirectory() as tmp_name:
         logs_dir = Path(tmp_name) / "logs"
@@ -423,7 +462,7 @@ def main() -> None:
             except NotImplementedError as exc:
                 assert (
                     str(exc)
-                    == "HT blanking report opening is not implemented yet."
+                    == "HT blanking extraction is not implemented yet."
                 )
 
             page = fake_playwright.chromium.browser.context.page
@@ -443,6 +482,14 @@ def main() -> None:
                     "wait_until": "domcontentloaded",
                     "timeout": 5678,
                 },
+                {
+                    "url": (
+                        "https://datasheet.hunting-intl.com"
+                        "/BlankingSheets/GenerateReport/456"
+                    ),
+                    "wait_until": "domcontentloaded",
+                    "timeout": 5678,
+                },
             ]
             assert page.load_states[:2] == [
                 {"state": "load", "timeout": 10000},
@@ -453,8 +500,11 @@ def main() -> None:
             ] * 5 + [
                 {"state": "load", "timeout": 10000},
                 {"state": "networkidle", "timeout": 10000},
+                {"state": "load", "timeout": 10000},
+                {"state": "networkidle", "timeout": 10000},
             ]
             assert [check["timeout"] for check in page.function_checks] == [
+                30000,
                 30000,
                 30000,
                 30000,
@@ -482,10 +532,14 @@ def main() -> None:
                 {"inputId": "MaterialGrade", "minCount": 1},
                 None,
                 None,
+                None,
             ]
             assert "#result-grid" in page.function_checks[7]["script"]
             assert "/ConnectorSheets/GenerateReport/" in (
                 page.function_checks[8]["script"]
+            )
+            assert "/BlankingSheets/GenerateReport/" in (
+                page.function_checks[9]["script"]
             )
             assert page.evaluate_calls == [
                 {
@@ -518,7 +572,7 @@ def main() -> None:
             assert page.locator_clicks == [
                 "#searchtable a.k-button:has-text('Filter')"
             ]
-            assert page.locator_waits == [
+            assert page.locator_waits[:9] == [
                 {
                     "selector": "#searchtable a.k-button:has-text('Filter')",
                     "state": "visible",
@@ -540,8 +594,24 @@ def main() -> None:
                     "timeout": 30000,
                 },
             ] * 7
-            assert len(page.report_frame.evaluate_calls) == 6
+            assert page.locator_waits[9] == {
+                "selector": (
+                    "a.k-button[href*='/BlankingSheets/GenerateReport/']"
+                    ":has-text('View Blanking Sheet')"
+                ),
+                "state": "visible",
+                "timeout": 30000,
+            }
+            assert page.locator_waits[10:] == [
+                {
+                    "selector": "#ReportViewerReportFrame",
+                    "state": "attached",
+                    "timeout": 30000,
+                },
+            ] * 3
+            assert len(page.report_frame.evaluate_calls) == 7
 
+            page.report_frame.report_blocks = build_report_blocks()
             assert adapter.extract_required_data(build_mapped_data()) == {
                 "tensile": "561,000",
                 "compression": "540,000",
@@ -558,7 +628,7 @@ def main() -> None:
                 "collapse": "10,987",
                 "drift": "NA",
             }
-            assert len(page.report_frame.evaluate_calls) == 15
+            assert len(page.report_frame.evaluate_calls) == 16
             assert adapter._normalize_report_label("  Connection\u00a0Data: ") == (
                 "connection data"
             )
@@ -712,7 +782,71 @@ def main() -> None:
         assert incomplete_report_page.wait_timeouts == [1000] * 45
         incomplete_report_adapter.close()
 
+        missing_blanking_href_playwright = FakePlaywright()
+        missing_blanking_href_adapter = build_adapter(
+            logs_dir,
+            missing_blanking_href_playwright,
+        )
+        missing_blanking_href_page = (
+            missing_blanking_href_playwright.chromium.browser.context.page
+        )
+        missing_blanking_href_page.locator_attributes.pop(
+            (
+                "a.k-button[href*='/BlankingSheets/GenerateReport/']"
+                ":has-text('View Blanking Sheet')",
+                "href",
+            )
+        )
+        try:
+            missing_blanking_href_adapter._open_blanking_sheet_from_datasheet()
+            raise AssertionError("Expected missing HT blanking href failure.")
+        except RuntimeError as exc:
+            assert str(exc) == (
+                "HT View Blanking Sheet link found but href is empty."
+            )
+        missing_blanking_href_adapter.close()
+
+        blanking_retry_playwright = FakePlaywright()
+        blanking_retry_adapter = build_adapter(
+            logs_dir,
+            blanking_retry_playwright,
+        )
+        blanking_retry_page = (
+            blanking_retry_playwright.chromium.browser.context.page
+        )
+        blanking_retry_page.report_frame.report_blocks = (
+            build_blanking_report_blocks()
+        )
+        blanking_retry_page.report_frame.evaluate_failures = 1
+        blanking_retry_adapter._wait_for_blanking_report_loaded()
+        assert blanking_retry_page.wait_timeouts == [1000]
+        blanking_retry_adapter.close()
+
+        incomplete_blanking_playwright = FakePlaywright()
+        incomplete_blanking_adapter = build_adapter(
+            logs_dir,
+            incomplete_blanking_playwright,
+        )
+        incomplete_blanking_page = (
+            incomplete_blanking_playwright.chromium.browser.context.page
+        )
+        incomplete_blanking_page.report_frame.report_blocks = [
+            {"text": "ACCESSORY BLANKING DIMENSIONS"},
+            {"text": "ACCESSORY PIN"},
+        ]
+        try:
+            incomplete_blanking_adapter._wait_for_blanking_report_loaded()
+            raise AssertionError("Expected incomplete HT blanking report failure.")
+        except RuntimeError as exc:
+            assert (
+                str(exc)
+                == "HT blanking report content did not finish loading."
+            )
+        assert incomplete_blanking_page.wait_timeouts == [1000] * 45
+        incomplete_blanking_adapter.close()
+
         check_repeated_report_opening(logs_dir)
+        check_repeated_blanking_report_opening(logs_dir)
         check_repeated_lifecycle(logs_dir)
 
     print("ht adapter ok")
