@@ -116,9 +116,9 @@ class HtAdapter(BaseAdapter):
         self.extract_required_data(mapped_data)
         self._open_blanking_sheet_from_datasheet()
         self._wait_for_blanking_report_loaded()
-        self.extract_blanking_diameters(mapped_data)
+        self.extract_blanking_dimensions(mapped_data)
         raise NotImplementedError(
-            "HT blanking length extraction is not implemented yet."
+            "HT result assembly is not implemented yet."
         )
 
     def open_datasheet_page(self) -> None:
@@ -935,10 +935,10 @@ class HtAdapter(BaseAdapter):
 
         return match.group(0)
 
-    def extract_blanking_diameters(
+    def extract_blanking_dimensions(
         self,
         mapped_data: dict[str, Any],
-    ) -> dict[str, dict[str, str]]:
+    ) -> dict[str, Any]:
         connection = mapped_data.get("connection") or {}
         connection_type = (connection.get("type") or "").upper().strip()
 
@@ -960,16 +960,30 @@ class HtAdapter(BaseAdapter):
             column_left=columns["id"],
         )
 
+        internal_length = self._extract_min_blanking_length(
+            blocks=blocks,
+            column_lefts=columns["internal_length"],
+        )
+        external_length = self._extract_min_blanking_length(
+            blocks=blocks,
+            column_lefts=columns["external_length"],
+        )
+
         logger.info(
-            "Extracted HT blanking diameters for %s: od=%s, id=%s",
+            "Extracted HT blanking dimensions for %s: "
+            "od=%s, id=%s, external_length=%s, internal_length=%s",
             connection_type,
             od,
             id_value,
+            external_length,
+            internal_length,
         )
 
         return {
             "od": od,
             "id": id_value,
+            "external_length": external_length,
+            "internal_length": internal_length,
         }
 
     def _extract_blanking_dimension_by_column(
@@ -998,6 +1012,35 @@ class HtAdapter(BaseAdapter):
             "tol_1": tol_1,
             "tol_2": tol_2,
         }
+
+    def _extract_min_blanking_length(
+        self,
+        blocks: list[dict[str, Any]],
+        column_lefts: list[float],
+    ) -> str:
+        values: list[float] = []
+
+        for column_left in column_lefts:
+            value_text = self._extract_blanking_column_value(
+                blocks=blocks,
+                column_left=column_left,
+            )
+
+            number = self._extract_first_number(value_text)
+            if number is None:
+                raise RuntimeError(
+                    f"Could not extract HT blanking length value. "
+                    f"column_left={column_left}, raw_value={value_text}"
+                )
+
+            values.append(self._to_float(number))
+
+        if not values:
+            raise RuntimeError(
+                f"No HT blanking length values found: {column_lefts}"
+            )
+
+        return f"{min(values):.3f}"
 
     def _extract_blanking_column_tolerance_and_value(
         self,
@@ -1031,6 +1074,17 @@ class HtAdapter(BaseAdapter):
             str(tolerance_block.get("text") or "").strip(),
             str(value_block.get("text") or "").strip(),
         )
+
+    def _extract_blanking_column_value(
+        self,
+        blocks: list[dict[str, Any]],
+        column_left: float,
+    ) -> str:
+        _, value_text = self._extract_blanking_column_tolerance_and_value(
+            blocks=blocks,
+            column_left=column_left,
+        )
+        return value_text
 
     def _get_blocks_by_left(
         self,
@@ -1102,6 +1156,9 @@ class HtAdapter(BaseAdapter):
         raise RuntimeError(
             f"Unsupported HT blanking tolerance format: {tolerance_text}"
         )
+
+    def _to_float(self, number_text: str) -> float:
+        return float(str(number_text).replace(",", ""))
 
     def _require_page(self) -> Page:
         if self.page is None:
