@@ -105,3 +105,7 @@ jobs:
       - name: Check service JFE adapter flow
         shell: pwsh
         run: python scripts/check_service_jfe_flow.py
+
+      - name: Check service HT adapter flow
+        shell: pwsh
+        run: python scripts/check_service_ht_flow.py

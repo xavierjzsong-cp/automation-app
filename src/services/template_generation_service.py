@@ -8,6 +8,7 @@ from typing import Any, Callable
 
 import yaml
 
+from src.adapters.ht_adapter import HtAdapter
 from src.adapters.jfe_adapter import JfeAdapter
 from src.adapters.tsh_adapter import TshAdapter
 from src.adapters.vam_adapter import VamAdapter
@@ -85,6 +86,7 @@ class TemplateGenerationService:
             "VAM": VamAdapter,
             "TSH": TshAdapter,
             "JFE": JfeAdapter,
+            "HT": HtAdapter,
         }
         self.partners_config_path = Path(partners_config_path) if partners_config_path else resource_path("config/partners.yml")
         self.logs_dir = Path(logs_dir) if logs_dir else get_logs_dir(create=False)
@@ -241,6 +243,20 @@ class TemplateGenerationService:
                 base_url=base_url,
                 datasheet_url=datasheet_url,
                 blanking_url=blanking_url,
+                logs_dir=self.logs_dir,
+                headless=not show_browser,
+                slow_mo=300,
+                timeout_ms=10000,
+                navigation_timeout_ms=60000,
+            )
+        elif partner == "HT":
+            datasheet_url = urls.get("connection_datasheet")
+            if not datasheet_url:
+                raise ValueError("HT config missing urls.connection_datasheet")
+
+            adapter = adapter_factory(
+                base_url=base_url,
+                datasheet_url=datasheet_url,
                 logs_dir=self.logs_dir,
                 headless=not show_browser,
                 slow_mo=300,
