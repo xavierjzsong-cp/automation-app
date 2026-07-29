@@ -1,4 +1,4 @@
-"""Smoke checks for the HT adapter report-opening flow."""
+"""Smoke checks for the complete HT adapter flow."""
 
 from __future__ import annotations
 
@@ -464,6 +464,42 @@ def check_repeated_blanking_dimension_extraction(
         adapter.close()
 
 
+def check_repeated_complete_flow(logs_dir: Path) -> None:
+    """Exercise the complete replaceable HT adapter flow."""
+    fake_playwright = FakePlaywright()
+    adapter = build_adapter(logs_dir, fake_playwright)
+
+    try:
+        for index in range(250):
+            mapped_data = build_mapped_data()
+            mapped_data["connection"]["type"] = (
+                "PIN" if index % 2 == 0 else "BOX"
+            )
+            mapped_data["drift_extraction"] = index % 3 != 0
+
+            result = adapter.run(mapped_data)
+            assert result["tensile"] == "561,000"
+            assert result["compression"] == "540,000"
+            assert result["burst"] == "12,345"
+            assert result["collapse"] == "10,987"
+            assert result["drift"] == (
+                "4.767" if mapped_data["drift_extraction"] else "NA"
+            )
+
+            if mapped_data["connection"]["type"] == "PIN":
+                assert result["id"]["nominal"] == "4.321"
+                assert result["od"]["nominal"] == "6.125"
+                assert result["internal_length"] == "4.875"
+                assert result["external_length"] == "6.250"
+            else:
+                assert result["id"]["nominal"] == "4.601"
+                assert result["od"]["nominal"] == "5.901"
+                assert result["internal_length"] == "7.000"
+                assert result["external_length"] == "8.375"
+    finally:
+        adapter.close()
+
+
 def main() -> None:
     with TemporaryDirectory() as tmp_name:
         logs_dir = Path(tmp_name) / "logs"
@@ -524,14 +560,25 @@ def main() -> None:
 
             assert fake_playwright.chromium.browser.context.page.goto_calls == []
 
-            try:
-                adapter.run(build_mapped_data())
-                raise AssertionError("Expected NotImplementedError for HT automation.")
-            except NotImplementedError as exc:
-                assert (
-                    str(exc)
-                    == "HT result assembly is not implemented yet."
-                )
+            assert adapter.run(build_mapped_data()) == {
+                "tensile": "561,000",
+                "compression": "540,000",
+                "burst": "12,345",
+                "collapse": "10,987",
+                "drift": "4.767",
+                "od": {
+                    "nominal": "5.901",
+                    "tol_1": "+0.014",
+                    "tol_2": "-0.008",
+                },
+                "id": {
+                    "nominal": "4.601",
+                    "tol_1": "+0.012",
+                    "tol_2": "-0.012",
+                },
+                "external_length": "8.375",
+                "internal_length": "7.000",
+            }
 
             page = fake_playwright.chromium.browser.context.page
             assert page.goto_calls == [
@@ -1028,6 +1075,7 @@ def main() -> None:
         check_repeated_report_opening(logs_dir)
         check_repeated_blanking_report_opening(logs_dir)
         check_repeated_blanking_dimension_extraction(logs_dir)
+        check_repeated_complete_flow(logs_dir)
         check_repeated_lifecycle(logs_dir)
 
     print("ht adapter ok")

@@ -113,13 +113,15 @@ class HtAdapter(BaseAdapter):
         )
         self._click_filter_and_open_report()
         self._wait_for_report_loaded()
-        self.extract_required_data(mapped_data)
+        datasheet_result = self.extract_required_data(mapped_data)
         self._open_blanking_sheet_from_datasheet()
         self._wait_for_blanking_report_loaded()
-        self.extract_blanking_dimensions(mapped_data)
-        raise NotImplementedError(
-            "HT result assembly is not implemented yet."
-        )
+        blanking_result = self.extract_blanking_dimensions(mapped_data)
+
+        return {
+            **datasheet_result,
+            **blanking_result,
+        }
 
     def open_datasheet_page(self) -> None:
         """Open the HT connection datasheet search page."""
