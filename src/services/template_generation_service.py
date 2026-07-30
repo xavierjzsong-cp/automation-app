@@ -12,6 +12,7 @@ from src.adapters.ht_adapter import HtAdapter
 from src.adapters.jfe_adapter import JfeAdapter
 from src.adapters.tsh_adapter import TshAdapter
 from src.adapters.vam_adapter import VamAdapter
+from src.mappers.coating_mapper import CoatingMapper
 from src.mappers.ht_mapper import HtMapper
 from src.mappers.jfe_mapper import JfeMapper
 from src.mappers.tsh_mapper import TshMapper
@@ -54,7 +55,7 @@ class GenerationResult:
 
 
 class TemplateGenerationService:
-    """Coordinates parser and writer for the current generation flow."""
+    """Coordinate parsing, mapping, optional adapters, and template writing."""
 
     SUPPORTED_TEMPLATE_SUFFIXES = {
         ".xlsx",
@@ -68,6 +69,7 @@ class TemplateGenerationService:
         parser: PotsDocParser | None = None,
         router: PartnerRouter | None = None,
         writer: TemplateWriter | None = None,
+        coating_mapper: CoatingMapper | None = None,
         mapper_registry: dict[str, Any] | None = None,
         adapter_factories: dict[str, AdapterFactory] | None = None,
         partners_config_path: str | Path | None = None,
@@ -76,6 +78,7 @@ class TemplateGenerationService:
         self.parser = parser or PotsDocParser()
         self.router = router or PartnerRouter()
         self.writer = writer or TemplateWriter()
+        self.coating_mapper = coating_mapper or CoatingMapper()
         self.mapper_registry = mapper_registry or {
             "HT": HtMapper(),
             "JFE": JfeMapper(),
@@ -122,6 +125,8 @@ class TemplateGenerationService:
                 status_callback=status_callback,
             )
 
+        coating_data = self.coating_mapper.build_mapped_data(routing_result)
+
         self._status(status_callback, "Filling Excel template...")
         writer_result = self.writer.write(
             parsed=parsed,
@@ -130,7 +135,7 @@ class TemplateGenerationService:
             template_path=request.template_path,
             output_dir=request.output_dir,
             user_name=request.user_name,
-            coating_data={},
+            coating_data=coating_data,
             target_sheet_name=request.target_sheet_name,
         )
 
@@ -140,7 +145,7 @@ class TemplateGenerationService:
             writer_result=writer_result,
             routing_result=routing_result,
             mapped_results=mapped_results,
-            coating_data={},
+            coating_data=coating_data,
             top_adapter=top_adapter,
             bottom_adapter=bottom_adapter,
             target_sheet_name=request.target_sheet_name,

@@ -39,6 +39,7 @@ scripts/check_partner_pipeline_parity.py
 scripts/check_coating_mapper.py
 scripts/check_ht_adapter.py
 scripts/check_jfe_adapter.py
+scripts/check_service_coating_flow.py
 scripts/check_service_vam_flow.py
 scripts/check_service_tsh_flow.py
 scripts/check_service_jfe_flow.py
@@ -63,7 +64,7 @@ run_ui.py
     Minimal application entry point.
 
 src/services/template_generation_service.py
-    Orchestrates parser, router, mapper, optional VAM/TSH/JFE/HT adapter execution, and writer.
+    Orchestrates parser, router, partner and coating mappers, optional VAM/TSH/JFE/HT adapter execution, and writer through replaceable dependencies.
 
 src/utils/app_paths.py
     Path helpers for source resources and per-user AppData files.
@@ -131,6 +132,9 @@ scripts/check_ht_adapter.py
 scripts/check_jfe_adapter.py
     Smoke check for JFE adapter browser lifecycle, datasheet/blanking selection and extraction, BOX/PIN dimensions, grade construction, repeatability, failure handling, and mapped-data validation.
 
+scripts/check_service_coating_flow.py
+    End-to-end check for replaceable coating mapping, service result propagation, and Excel coating cells.
+
 scripts/check_service_vam_flow.py
     Smoke check for VAM mapper and adapter integration inside TemplateGenerationService.
 
@@ -144,7 +148,7 @@ scripts/check_service_ht_flow.py
     Smoke and repeatability check for HT mapper and replaceable adapter integration inside TemplateGenerationService.
 
 src/writers/template_writer.py
-    Excel writer that fills parser-derived and adapter-derived fields into a selected sheet.
+    Excel writer that fills parser-derived, adapter-derived, and coating fields into a selected sheet.
 
 config/partners.yml
     Minimal partner configuration for VAM, TSH, JFE, and HT.
@@ -207,6 +211,7 @@ python scripts/check_ht_adapter.py
 python scripts/check_jfe_adapter.py
 python scripts/check_vam_adapter.py
 python scripts/check_tsh_adapter.py
+python scripts/check_service_coating_flow.py
 python scripts/check_service_vam_flow.py
 python scripts/check_service_tsh_flow.py
 python scripts/check_service_jfe_flow.py
@@ -247,6 +252,7 @@ JFE adapter blanking extraction and repeatability smoke check
 TSH adapter blanking extraction smoke check
 Writer behavior smoke check
 Service flow smoke check
+Service coating mapper and Excel output flow check
 Service VAM adapter flow smoke check
 Service TSH adapter flow smoke check
 Service JFE adapter flow smoke check
