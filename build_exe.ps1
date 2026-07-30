@@ -77,6 +77,9 @@ try {
     Write-Host "Checking HT mapper behavior..."
     Invoke-Python @("scripts/check_ht_mapper.py")
 
+    Write-Host "Checking partner pipeline parity..."
+    Invoke-Python @("scripts/check_partner_pipeline_parity.py")
+
     Write-Host "Checking complete HT adapter flow..."
     Invoke-Python @("scripts/check_ht_adapter.py")
 

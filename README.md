@@ -33,6 +33,7 @@ scripts/check_vam_adapter.py
 scripts/check_tsh_adapter.py
 scripts/check_jfe_mapper.py
 scripts/check_ht_mapper.py
+scripts/check_partner_pipeline_parity.py
 scripts/check_ht_adapter.py
 scripts/check_jfe_adapter.py
 scripts/check_service_vam_flow.py
@@ -49,7 +50,6 @@ Not implemented yet:
 
 ```text
 CustomTkinter UI
-Other partner adapters
 PyInstaller packaging
 ```
 
@@ -110,6 +110,9 @@ scripts/check_jfe_mapper.py
 scripts/check_ht_mapper.py
     Smoke and repeatability check for HT mapper formatting and validation behavior.
 
+scripts/check_partner_pipeline_parity.py
+    Cross-partner parser, router, mapper, configuration-contract, and repeatability check for VAM, TSH, JFE, and HT.
+
 scripts/check_ht_adapter.py
     Smoke and repeatability check for the complete HT adapter flow, result assembly, extraction, navigation, iframe readiness, failures, mapping, timeouts, validation, and replaceable browser lifecycle management.
 
@@ -135,7 +138,7 @@ config/partners.yml
     Minimal partner configuration for VAM, TSH, JFE, and HT.
 
 config/field_mapping.yml
-    Minimal field alias configuration for OD, WT, and grade.
+    Legacy-compatible field alias contract for OD, WT, grade, drift option, material family, and yield strength.
 
 .github/workflows/ci.yml
     Minimal GitHub Actions CI workflow.
@@ -186,6 +189,7 @@ python -c "from src.parsers.pots_doc_parser import PotsDocParser; text='POTS Doc
 python -c "from src.adapters.vam_adapter import VamAdapter; print('vam adapter import ok')"
 python scripts/check_jfe_mapper.py
 python scripts/check_ht_mapper.py
+python scripts/check_partner_pipeline_parity.py
 python scripts/check_ht_adapter.py
 python scripts/check_jfe_adapter.py
 python scripts/check_vam_adapter.py
@@ -224,6 +228,7 @@ VAM mapper behavior smoke check
 VAM adapter data extraction smoke check
 TSH mapper behavior smoke check
 JFE mapper behavior smoke check
+Cross-partner parser, router, mapper, configuration-contract, and repeatability check
 JFE adapter blanking extraction and repeatability smoke check
 TSH adapter blanking extraction smoke check
 Writer behavior smoke check

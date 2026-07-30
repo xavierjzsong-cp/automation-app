@@ -72,6 +72,10 @@ jobs:
         shell: pwsh
         run: python scripts/check_ht_mapper.py
 
+      - name: Check partner pipeline parity
+        shell: pwsh
+        run: python scripts/check_partner_pipeline_parity.py
+
       - name: Check complete HT adapter flow
         shell: pwsh
         run: python scripts/check_ht_adapter.py
