@@ -10,6 +10,8 @@ from typing import Any
 
 import fitz
 
+from src.mappers.mapper_tables.product_type_map import PRODUCT_TYPE_ALIASES
+
 
 logger = logging.getLogger(__name__)
 
@@ -106,9 +108,13 @@ class PotsDocParser:
             or self._extract_field_value(cleaned_text, ["Overall Length"])
         )
 
-        product_type = self._extract_field_value(cleaned_text, ["Product Type"])
-        if not product_type and normalized_description:
-            product_type = self._extract_product_type_guess(normalized_description)
+        product_type = (
+            self._extract_product_type_from_description(normalized_description)
+            if normalized_description
+            else None
+        )
+        if not product_type:
+            product_type = self._extract_product_type_from_document(cleaned_text)
 
         connections = self._parse_connections(
             normalized_description,
@@ -233,23 +239,113 @@ class PotsDocParser:
 
         return self._extract_field_value(text, ["Product Description"])
 
-    def _extract_product_type_guess(self, description: str) -> str | None:
-        marker_patterns = [
-            *self.MATERIAL_GRADE_PATTERNS,
-            r"\b\d+(?:\.\d+)?(?:\s+\d+/\d+)?\s*(?:\"|IN|INCH)?\s+\d+(?:\.\d+)?\s*#?\b",
+    def _extract_product_type_from_description(self, text: str) -> str | None:
+        normalized_text = self._normalize_parse_text(text)
+
+        for product_type, aliases in self._iter_product_type_aliases_by_length():
+            for alias in aliases:
+                if self._phrase_at_start(normalized_text, alias):
+                    return product_type
+
+        for product_type, aliases in self._iter_product_type_aliases_by_length():
+            for alias in aliases:
+                if self._phrase_exists(normalized_text, alias):
+                    return product_type
+
+        return None
+
+    def _extract_product_type_from_document(self, text: str) -> str | None:
+        lines = [line.strip() for line in text.splitlines() if line.strip()]
+        checked_prefix_patterns = [
+            r"^[☒☑✓✔]\s*(.+)$",
+            r"^\[\s*[xX]\s*\]\s*(.+)$",
         ]
 
-        first_marker_index: int | None = None
-        for pattern in marker_patterns:
-            match = re.search(pattern, description, flags=re.IGNORECASE)
-            if match and (first_marker_index is None or match.start() < first_marker_index):
-                first_marker_index = match.start()
+        for line in lines:
+            for pattern in checked_prefix_patterns:
+                match = re.match(pattern, line)
+                if match:
+                    candidate = self._normalize_description_text(match.group(1)) or ""
+                    matched = self._match_product_type_option(candidate)
+                    if matched:
+                        return matched
 
-        if first_marker_index is None or first_marker_index <= 0:
+        product_type_block = self._extract_product_type_block(text)
+        if product_type_block:
+            block = self._normalize_description_text(product_type_block) or ""
+            matched = self._match_product_type_option(block)
+            if matched:
+                return matched
+
+        return None
+
+    def _extract_product_type_block(self, text: str) -> str | None:
+        start_match = re.search(r"Product Type", text, flags=re.IGNORECASE)
+        end_match = re.search(r"Product Description", text, flags=re.IGNORECASE)
+
+        if not start_match or not end_match:
             return None
 
-        candidate = description[:first_marker_index].strip(" ,;-")
-        return candidate or None
+        if end_match.start() <= start_match.end():
+            return None
+
+        return text[start_match.end():end_match.start()].strip()
+
+    def _match_product_type_option(self, candidate: str) -> str | None:
+        candidate_norm = self._normalize_parse_text(candidate)
+
+        for product_type, aliases in self._iter_product_type_aliases_by_length():
+            for alias in aliases:
+                if self._normalize_parse_text(alias) == candidate_norm:
+                    return product_type
+
+        for product_type, aliases in self._iter_product_type_aliases_by_length():
+            for alias in aliases:
+                alias_norm = self._normalize_parse_text(alias)
+                if self._phrase_exists(candidate_norm, alias_norm):
+                    return product_type
+
+        return None
+
+    def _iter_product_type_aliases_by_length(self) -> list[tuple[str, list[str]]]:
+        items = []
+
+        for product_type, aliases in PRODUCT_TYPE_ALIASES.items():
+            normalized_aliases = sorted(
+                {self._normalize_parse_text(alias) for alias in aliases},
+                key=len,
+                reverse=True,
+            )
+            items.append((product_type, normalized_aliases))
+
+        items.sort(
+            key=lambda item: max(len(alias) for alias in item[1]),
+            reverse=True,
+        )
+
+        return items
+
+    def _phrase_at_start(self, text: str, phrase: str) -> bool:
+        pattern = self._phrase_pattern(phrase)
+        match = re.search(pattern, text, flags=re.IGNORECASE)
+        return bool(match and match.start() == 0)
+
+    def _phrase_exists(self, text: str, phrase: str) -> bool:
+        pattern = self._phrase_pattern(phrase)
+        return bool(re.search(pattern, text, flags=re.IGNORECASE))
+
+    def _phrase_pattern(self, phrase: str) -> str:
+        escaped = re.escape(self._normalize_parse_text(phrase))
+        escaped = escaped.replace(r"\ ", r"\s+")
+        return rf"(?<![A-Z0-9]){escaped}(?![A-Z0-9])"
+
+    def _normalize_parse_text(self, text: str) -> str:
+        text = text.upper().strip()
+        text = text.replace("\u00a0", " ")
+        text = text.replace("“", '"').replace("”", '"')
+        text = text.replace("–", "-").replace("—", "-")
+        text = re.sub(r"\s+", " ", text)
+        return text.strip()
 
     def _extract_material_grade(self, text: str | None) -> str | None:
         if not text:
@@ -331,13 +427,14 @@ class PotsDocParser:
         cleaned = text
 
         if product_type:
-            cleaned = re.sub(
-                rf"^\s*{re.escape(product_type)}\b",
-                " ",
-                cleaned,
-                count=1,
-                flags=re.IGNORECASE,
-            )
+            for alias in PRODUCT_TYPE_ALIASES.get(product_type, [product_type]):
+                cleaned = re.sub(
+                    self._phrase_pattern(alias),
+                    " ",
+                    cleaned,
+                    count=1,
+                    flags=re.IGNORECASE,
+                )
 
         for pattern in self.MATERIAL_GRADE_PATTERNS:
             cleaned = re.sub(pattern, " ", cleaned, flags=re.IGNORECASE)

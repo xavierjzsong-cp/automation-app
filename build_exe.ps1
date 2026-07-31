@@ -56,6 +56,9 @@ try {
     $parserCheck = "from src.parsers.pots_doc_parser import PotsDocParser; text='POTS Document number: 123 Rev: A\nCP Part Number ABC-001\nProduct Description Pup Joint 13CR(80) 5.5 17# VAM TOP BOX X 5.5 17# TSH WEDGE PIN OAL 120\nANSI/NACE MR0175/ISO 15156 (Yes/No) Yes\nQCP (Standard/Client Specific) Standard\n'; parsed=PotsDocParser().parse_text(text); assert parsed.part_number == 'ABC-001'; assert parsed.rev == 'A'; assert parsed.product_material_grade == '13CR(80)'; assert parsed.connections['upper'].family == 'VAM'; assert parsed.connections['lower'].family == 'TSH'; print('parser ok')"
     Invoke-Python @("-c", $parserCheck)
 
+    Write-Host "Checking product type parser parity..."
+    Invoke-Python @("scripts/check_product_type_parser.py")
+
     Write-Host "Checking router behavior..."
     $routerCheck = "from src.parsers.pots_doc_parser import PotsDocParser; from src.routers.partner_router import PartnerRouter; text='POTS Document number: 123 Rev: A\nCP Part Number ABC-001\nProduct Description Pup Joint 13CR(80) 5.5 17# VAM TOP BOX X 5.5 17# TSH WEDGE PIN OAL 120\nANSI/NACE MR0175/ISO 15156 (Yes/No) Yes\nQCP (Standard/Client Specific) Standard\n'; parsed=PotsDocParser().parse_text(text); result=PartnerRouter().route(parsed); targets=result['targets']; assert targets[0]['side'] == 'upper'; assert targets[0]['partner'] == 'VAM'; assert targets[1]['side'] == 'lower'; assert targets[1]['partner'] == 'TSH'; assert result['partners_involved'] == ['VAM', 'TSH']; assert result['shared_data']['drift_extraction'] is True; print('router ok')"
     Invoke-Python @("-c", $routerCheck)
