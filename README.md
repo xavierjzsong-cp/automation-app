@@ -18,6 +18,8 @@ config/partners.yml
 config/field_mapping.yml
 src/services/template_generation_service.py
 src/utils/app_paths.py
+src/ui/__init__.py
+src/ui/styles.py
 src/parsers/pots_doc_parser.py
 src/routers/partner_router.py
 src/mappers/tsh_mapper.py
@@ -39,6 +41,7 @@ scripts/check_ht_mapper.py
 scripts/check_partner_pipeline_parity.py
 scripts/check_coating_mapper.py
 scripts/check_product_type_parser.py
+scripts/check_ui_styles.py
 scripts/check_ht_adapter.py
 scripts/check_jfe_adapter.py
 scripts/check_service_coating_flow.py
@@ -55,7 +58,7 @@ requirements.txt
 Not implemented yet:
 
 ```text
-CustomTkinter UI
+CustomTkinter application window and interactions
 PyInstaller packaging
 ```
 
@@ -70,6 +73,9 @@ src/services/template_generation_service.py
 
 src/utils/app_paths.py
     Path helpers for source resources and per-user AppData files.
+
+src/ui/styles.py
+    Legacy desktop colors and dimensions exposed through an import-safe UI package.
 
 src/parsers/pots_doc_parser.py
     POTS text/PDF parser with legacy product-type aliases and structured fields for downstream steps.
@@ -133,6 +139,9 @@ scripts/check_coating_mapper.py
 
 scripts/check_product_type_parser.py
     Product-type table parity, description aliases, document options, precedence, cleanup, and repeatability check.
+
+scripts/check_ui_styles.py
+    Import-safety, complete style-constant parity, and repeatability check without creating a GUI window.
 
 scripts/check_ht_adapter.py
     Smoke and repeatability check for the complete HT adapter flow, result assembly, extraction, navigation, iframe readiness, failures, mapping, timeouts, validation, and replaceable browser lifecycle management.
@@ -207,10 +216,11 @@ Run the same core checks used by the current CI:
 
 ```powershell
 python -m compileall -q run_ui.py src
-python -c "from src.services.template_generation_service import GenerationRequest, GenerationResult, TemplateGenerationService; from src.parsers.pots_doc_parser import PotsDocParser; from src.routers.partner_router import PartnerRouter; from src.mappers.coating_mapper import CoatingMapper; from src.mappers.ht_mapper import HtMapper; from src.mappers.jfe_mapper import JfeMapper; from src.mappers.tsh_mapper import TshMapper; from src.mappers.vam_mapper import VamMapper; from src.adapters.ht_adapter import HtAdapter; from src.adapters.jfe_adapter import JfeAdapter; from src.writers.template_writer import TemplateWriter; from src.utils.app_paths import resource_path, get_ui_settings_path; print(resource_path('config/partners.yml')); print(get_ui_settings_path()); print('ok')"
+python -c "from src.services.template_generation_service import GenerationRequest, GenerationResult, TemplateGenerationService; from src.parsers.pots_doc_parser import PotsDocParser; from src.routers.partner_router import PartnerRouter; from src.mappers.coating_mapper import CoatingMapper; from src.mappers.ht_mapper import HtMapper; from src.mappers.jfe_mapper import JfeMapper; from src.mappers.tsh_mapper import TshMapper; from src.mappers.vam_mapper import VamMapper; from src.adapters.ht_adapter import HtAdapter; from src.adapters.jfe_adapter import JfeAdapter; from src.ui.styles import AppStyle; from src.writers.template_writer import TemplateWriter; from src.utils.app_paths import resource_path, get_ui_settings_path; print(resource_path('config/partners.yml')); print(get_ui_settings_path()); print(AppStyle.COLOR_PRIMARY); print('ok')"
 python -c "import yaml; from pathlib import Path; partners=yaml.safe_load(Path('config/partners.yml').read_text(encoding='utf-8')); fields=yaml.safe_load(Path('config/field_mapping.yml').read_text(encoding='utf-8')); assert set(partners['partners']) == {'VAM', 'TSH', 'JFE', 'HT'}; assert partners['partners']['JFE']['urls']['homepage']; assert partners['partners']['JFE']['urls']['connection_datasheet']; assert partners['partners']['JFE']['urls']['blanking_dimensions']; assert partners['partners']['HT']['urls']['homepage']; assert partners['partners']['HT']['urls']['connection_datasheet']; assert partners['partners']['HT']['urls']['blanking_dimensions'] is None; assert {'od', 'wt', 'grade'} <= set(fields['fields']); print('yaml ok')"
 python -c "from src.parsers.pots_doc_parser import PotsDocParser; text='POTS Document number: 123 Rev: A\nCP Part Number ABC-001\nProduct Description Pup Joint 13CR(80) 5.5 17# VAM TOP BOX X 5.5 17# TSH WEDGE PIN OAL 120\nANSI/NACE MR0175/ISO 15156 (Yes/No) Yes\nQCP (Standard/Client Specific) Standard\n'; parsed=PotsDocParser().parse_text(text); assert parsed.part_number == 'ABC-001'; assert parsed.rev == 'A'; assert parsed.product_material_grade == '13CR(80)'; assert parsed.connections['upper'].family == 'VAM'; assert parsed.connections['lower'].family == 'TSH'; print('parser ok')"
 python scripts/check_product_type_parser.py
+python scripts/check_ui_styles.py
 python -c "from src.adapters.vam_adapter import VamAdapter; print('vam adapter import ok')"
 python scripts/check_jfe_mapper.py
 python scripts/check_ht_mapper.py
@@ -248,6 +258,7 @@ The workflow currently checks:
 ```text
 Python compilation
 Core service import
+Import-safe UI style parity and repeatability check
 Minimal YAML configuration loading
 Parser behavior smoke check
 Product-type alias, document-option, cleanup, and repeatability parity check
