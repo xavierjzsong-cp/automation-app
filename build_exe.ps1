@@ -51,6 +51,9 @@ try {
     Write-Host "Checking UI style parity..."
     Invoke-Python @("scripts/check_ui_styles.py")
 
+    Write-Host "Checking UI application shell..."
+    Invoke-Python @("scripts/check_ui_app_shell.py")
+
     Write-Host "Checking YAML configuration..."
     $yamlCheck = "import yaml; from pathlib import Path; partners=yaml.safe_load(Path('config/partners.yml').read_text(encoding='utf-8')); fields=yaml.safe_load(Path('config/field_mapping.yml').read_text(encoding='utf-8')); assert set(partners['partners']) == {'VAM', 'TSH', 'JFE', 'HT'}; assert partners['partners']['VAM']['urls']['homepage']; assert partners['partners']['VAM']['urls']['connection_datasheet']; assert partners['partners']['TSH']['urls']['homepage']; assert partners['partners']['TSH']['urls']['connection_datasheet']; assert partners['partners']['TSH']['urls']['blanking_dimensions']; assert partners['partners']['JFE']['urls']['homepage']; assert partners['partners']['JFE']['urls']['connection_datasheet']; assert partners['partners']['JFE']['urls']['blanking_dimensions']; assert partners['partners']['HT']['urls']['homepage']; assert partners['partners']['HT']['urls']['connection_datasheet']; assert partners['partners']['HT']['urls']['blanking_dimensions'] is None; assert {'od', 'wt', 'grade'} <= set(fields['fields']); print('yaml ok')"
     Invoke-Python @("-c", $yamlCheck)

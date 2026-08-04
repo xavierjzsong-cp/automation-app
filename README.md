@@ -19,6 +19,7 @@ config/field_mapping.yml
 src/services/template_generation_service.py
 src/utils/app_paths.py
 src/ui/__init__.py
+src/ui/app.py
 src/ui/styles.py
 src/parsers/pots_doc_parser.py
 src/routers/partner_router.py
@@ -42,6 +43,7 @@ scripts/check_partner_pipeline_parity.py
 scripts/check_coating_mapper.py
 scripts/check_product_type_parser.py
 scripts/check_ui_styles.py
+scripts/check_ui_app_shell.py
 scripts/check_ht_adapter.py
 scripts/check_jfe_adapter.py
 scripts/check_service_coating_flow.py
@@ -58,7 +60,7 @@ requirements.txt
 Not implemented yet:
 
 ```text
-CustomTkinter application window and interactions
+UI interaction callbacks and entry-point activation
 PyInstaller packaging
 ```
 
@@ -76,6 +78,9 @@ src/utils/app_paths.py
 
 src/ui/styles.py
     Legacy desktop colors and dimensions exposed through an import-safe UI package.
+
+src/ui/app.py
+    Partial legacy CustomTkinter application shell with window setup, static layout, and widget factories; the entry point remains inactive until callbacks are restored.
 
 src/parsers/pots_doc_parser.py
     POTS text/PDF parser with legacy product-type aliases and structured fields for downstream steps.
@@ -142,6 +147,9 @@ scripts/check_product_type_parser.py
 
 scripts/check_ui_styles.py
     Import-safety, complete style-constant parity, and repeatability check without creating a GUI window.
+
+scripts/check_ui_app_shell.py
+    Import-safe application class, static layout, method signature, entry-point boundary, Playwright path, and repeatability check without creating a window.
 
 scripts/check_ht_adapter.py
     Smoke and repeatability check for the complete HT adapter flow, result assembly, extraction, navigation, iframe readiness, failures, mapping, timeouts, validation, and replaceable browser lifecycle management.
@@ -221,6 +229,7 @@ python -c "import yaml; from pathlib import Path; partners=yaml.safe_load(Path('
 python -c "from src.parsers.pots_doc_parser import PotsDocParser; text='POTS Document number: 123 Rev: A\nCP Part Number ABC-001\nProduct Description Pup Joint 13CR(80) 5.5 17# VAM TOP BOX X 5.5 17# TSH WEDGE PIN OAL 120\nANSI/NACE MR0175/ISO 15156 (Yes/No) Yes\nQCP (Standard/Client Specific) Standard\n'; parsed=PotsDocParser().parse_text(text); assert parsed.part_number == 'ABC-001'; assert parsed.rev == 'A'; assert parsed.product_material_grade == '13CR(80)'; assert parsed.connections['upper'].family == 'VAM'; assert parsed.connections['lower'].family == 'TSH'; print('parser ok')"
 python scripts/check_product_type_parser.py
 python scripts/check_ui_styles.py
+python scripts/check_ui_app_shell.py
 python -c "from src.adapters.vam_adapter import VamAdapter; print('vam adapter import ok')"
 python scripts/check_jfe_mapper.py
 python scripts/check_ht_mapper.py
@@ -259,6 +268,7 @@ The workflow currently checks:
 Python compilation
 Core service import
 Import-safe UI style parity and repeatability check
+Import-safe UI application shell and entry-point boundary check
 Minimal YAML configuration loading
 Parser behavior smoke check
 Product-type alias, document-option, cleanup, and repeatability parity check

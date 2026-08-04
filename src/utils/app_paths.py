@@ -21,6 +21,13 @@ def resource_path(relative_path: str | Path) -> Path:
     return base_path / Path(relative_path)
 
 
+def configure_playwright_browsers() -> None:
+    """Use bundled Playwright browsers when they are present."""
+    bundled_browsers = resource_path("ms-playwright")
+    if bundled_browsers.exists():
+        os.environ["PLAYWRIGHT_BROWSERS_PATH"] = str(bundled_browsers)
+
+
 def get_app_data_dir(create: bool = False) -> Path:
     """Return the per-user AppData directory for runtime files."""
     local_app_data = os.environ.get("LOCALAPPDATA")

@@ -39,6 +39,10 @@ jobs:
         shell: pwsh
         run: python scripts/check_ui_styles.py
 
+      - name: Check UI application shell
+        shell: pwsh
+        run: python scripts/check_ui_app_shell.py
+
       - name: Validate YAML config
         shell: pwsh
         run: |
