@@ -411,3 +411,81 @@ class TemplateAutomationApp(AppStyle, ctk.CTk):
             button_kwargs["width"] = width
 
         return ctk.CTkButton(**button_kwargs)
+
+    def _browse_input_pdf(self) -> None:
+        path = filedialog.askopenfilename(
+            title="Select Input POTS PDF",
+            filetypes=[
+                ("PDF files", "*.pdf"),
+                ("All files", "*.*"),
+            ],
+        )
+
+        if path:
+            self.input_pdf_var.set(path)
+            self._save_settings()
+
+    def _browse_template_file(self) -> None:
+        path = filedialog.askopenfilename(
+            title="Select Template Excel File",
+            filetypes=[
+                ("Excel files", "*.xlsx *.xlsm *.xltx *.xltm"),
+                ("All files", "*.*"),
+            ],
+        )
+
+        if path:
+            self.template_file_var.set(path)
+            self._save_settings()
+
+    def _browse_output_dir(self) -> None:
+        path = filedialog.askdirectory(
+            title="Select Output Folder",
+        )
+
+        if path:
+            self.output_dir_var.set(path)
+            self._save_settings()
+
+    def _load_settings(self) -> None:
+        if not self.SETTINGS_PATH.exists():
+            return
+
+        try:
+            with self.SETTINGS_PATH.open("r", encoding="utf-8") as f:
+                settings = json.load(f)
+
+            self.user_name_var.set(settings.get("user_name", ""))
+            self.input_pdf_var.set(settings.get("input_pdf", ""))
+            self.template_file_var.set(settings.get("template_file", ""))
+            self.output_dir_var.set(settings.get("output_dir", ""))
+            self.show_browser_var.set(bool(settings.get("show_browser", True)))
+
+            target_sheet = str(
+                settings.get("target_sheet") or self.TEMPLATE_SHEET_OPTIONS[0]
+            ).strip()
+            if not target_sheet:
+                target_sheet = self.TEMPLATE_SHEET_OPTIONS[0]
+            self.target_sheet_var.set(target_sheet)
+
+        except Exception:
+            pass
+
+    def _save_settings(self) -> None:
+        try:
+            self.SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
+
+            settings = {
+                "user_name": self.user_name_var.get().strip(),
+                "input_pdf": self.input_pdf_var.get().strip(),
+                "template_file": self.template_file_var.get().strip(),
+                "target_sheet": self.target_sheet_var.get().strip(),
+                "output_dir": self.output_dir_var.get().strip(),
+                "show_browser": self.show_browser_var.get(),
+            }
+
+            with self.SETTINGS_PATH.open("w", encoding="utf-8") as f:
+                json.dump(settings, f, ensure_ascii=False, indent=4)
+
+        except Exception:
+            pass

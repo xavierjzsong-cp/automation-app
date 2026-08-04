@@ -60,7 +60,7 @@ requirements.txt
 Not implemented yet:
 
 ```text
-UI interaction callbacks and entry-point activation
+Remaining UI interaction callbacks and entry-point activation
 PyInstaller packaging
 ```
 
@@ -80,7 +80,7 @@ src/ui/styles.py
     Legacy desktop colors and dimensions exposed through an import-safe UI package.
 
 src/ui/app.py
-    Partial legacy CustomTkinter application shell with window setup, static layout, and widget factories; the entry point remains inactive until callbacks are restored.
+    Partial legacy CustomTkinter application shell with window setup, static layout, widget factories, settings persistence, and file/folder browse callbacks; the entry point remains inactive until the remaining callbacks are restored.
 
 src/parsers/pots_doc_parser.py
     POTS text/PDF parser with legacy product-type aliases and structured fields for downstream steps.
@@ -149,7 +149,7 @@ scripts/check_ui_styles.py
     Import-safety, complete style-constant parity, and repeatability check without creating a GUI window.
 
 scripts/check_ui_app_shell.py
-    Import-safe application class, static layout, method signature, entry-point boundary, Playwright path, and repeatability check without creating a window.
+    Import-safe application class, static layout, settings persistence, browse callbacks, method signature, entry-point boundary, Playwright path, and repeatability check without creating a window.
 
 scripts/check_ht_adapter.py
     Smoke and repeatability check for the complete HT adapter flow, result assembly, extraction, navigation, iframe readiness, failures, mapping, timeouts, validation, and replaceable browser lifecycle management.

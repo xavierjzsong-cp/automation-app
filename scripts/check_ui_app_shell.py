@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import inspect
+import json
 import os
 from pathlib import Path
 import sys
@@ -27,6 +28,17 @@ from src.utils.app_paths import (  # noqa: E402
 )
 
 
+class FakeVariable:
+    def __init__(self, value=None) -> None:
+        self.value = value
+
+    def get(self):
+        return self.value
+
+    def set(self, value) -> None:
+        self.value = value
+
+
 EXPECTED_METHOD_PARAMETERS = {
     "__init__": ["self"],
     "_build_ui": ["self"],
@@ -40,6 +52,11 @@ EXPECTED_METHOD_PARAMETERS = {
         "width",
         "height",
     ],
+    "_browse_input_pdf": ["self"],
+    "_browse_template_file": ["self"],
+    "_browse_output_dir": ["self"],
+    "_load_settings": ["self"],
+    "_save_settings": ["self"],
 }
 
 EXPECTED_LAYOUT_TEXT = {
@@ -102,9 +119,105 @@ def check_shell_structure() -> None:
     assert tkinter._default_root is None
 
 
+def build_app_stub(settings_path: Path) -> TemplateAutomationApp:
+    app = TemplateAutomationApp.__new__(TemplateAutomationApp)
+    app.SETTINGS_PATH = settings_path
+    app.user_name_var = FakeVariable("")
+    app.input_pdf_var = FakeVariable("")
+    app.template_file_var = FakeVariable("")
+    app.target_sheet_var = FakeVariable(app.TEMPLATE_SHEET_OPTIONS[0])
+    app.output_dir_var = FakeVariable("")
+    app.show_browser_var = FakeVariable(True)
+    return app
+
+
+def check_settings_round_trip() -> None:
+    with TemporaryDirectory() as tmp_name:
+        settings_path = Path(tmp_name) / "config" / "ui_settings.json"
+        app = build_app_stub(settings_path)
+
+        app.user_name_var.set("  Test User  ")
+        app.input_pdf_var.set("  input.pdf  ")
+        app.template_file_var.set("  template.xlsx  ")
+        app.target_sheet_var.set("  CP_ACCESSORY-03  ")
+        app.output_dir_var.set("  output  ")
+        app.show_browser_var.set(False)
+        app._save_settings()
+
+        assert json.loads(settings_path.read_text(encoding="utf-8")) == {
+            "user_name": "Test User",
+            "input_pdf": "input.pdf",
+            "template_file": "template.xlsx",
+            "target_sheet": "CP_ACCESSORY-03",
+            "output_dir": "output",
+            "show_browser": False,
+        }
+
+        loaded_app = build_app_stub(settings_path)
+        loaded_app._load_settings()
+        assert loaded_app.user_name_var.get() == "Test User"
+        assert loaded_app.input_pdf_var.get() == "input.pdf"
+        assert loaded_app.template_file_var.get() == "template.xlsx"
+        assert loaded_app.target_sheet_var.get() == "CP_ACCESSORY-03"
+        assert loaded_app.output_dir_var.get() == "output"
+        assert loaded_app.show_browser_var.get() is False
+
+        settings_path.write_text("not valid json", encoding="utf-8")
+        loaded_app.user_name_var.set("unchanged")
+        loaded_app._load_settings()
+        assert loaded_app.user_name_var.get() == "unchanged"
+
+
+def check_browse_callbacks() -> None:
+    with TemporaryDirectory() as tmp_name:
+        app = build_app_stub(Path(tmp_name) / "ui_settings.json")
+        save_calls = []
+        app._save_settings = lambda: save_calls.append(True)
+
+        with patch(
+            "src.ui.app.filedialog.askopenfilename",
+            return_value="selected.pdf",
+        ) as dialog:
+            app._browse_input_pdf()
+            dialog.assert_called_once_with(
+                title="Select Input POTS PDF",
+                filetypes=[("PDF files", "*.pdf"), ("All files", "*.*")],
+            )
+        assert app.input_pdf_var.get() == "selected.pdf"
+
+        with patch(
+            "src.ui.app.filedialog.askopenfilename",
+            return_value="template.xlsx",
+        ) as dialog:
+            app._browse_template_file()
+            dialog.assert_called_once_with(
+                title="Select Template Excel File",
+                filetypes=[
+                    ("Excel files", "*.xlsx *.xlsm *.xltx *.xltm"),
+                    ("All files", "*.*"),
+                ],
+            )
+        assert app.template_file_var.get() == "template.xlsx"
+
+        with patch(
+            "src.ui.app.filedialog.askdirectory",
+            return_value="output",
+        ) as dialog:
+            app._browse_output_dir()
+            dialog.assert_called_once_with(title="Select Output Folder")
+        assert app.output_dir_var.get() == "output"
+        assert len(save_calls) == 3
+
+        with patch("src.ui.app.filedialog.askopenfilename", return_value=""):
+            app._browse_input_pdf()
+        assert len(save_calls) == 3
+
+
 def main() -> None:
     check_playwright_path_boundary()
     check_shell_structure()
+    check_settings_round_trip()
+    check_browse_callbacks()
 
     for _ in range(1000):
         check_shell_structure()
