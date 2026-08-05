@@ -39,6 +39,28 @@ class FakeVariable:
         self.value = value
 
 
+class FakeWidget:
+    def __init__(self, *args, **kwargs) -> None:
+        self.args = args
+        self.kwargs = kwargs
+        self.configure_calls = []
+        self.grid_calls = []
+        self.grid_remove_calls = 0
+        self.destroyed = False
+
+    def configure(self, **kwargs) -> None:
+        self.configure_calls.append(kwargs)
+
+    def grid(self, **kwargs) -> None:
+        self.grid_calls.append(kwargs)
+
+    def grid_remove(self) -> None:
+        self.grid_remove_calls += 1
+
+    def destroy(self) -> None:
+        self.destroyed = True
+
+
 EXPECTED_METHOD_PARAMETERS = {
     "__init__": ["self"],
     "_build_ui": ["self"],
@@ -55,6 +77,14 @@ EXPECTED_METHOD_PARAMETERS = {
     "_browse_input_pdf": ["self"],
     "_browse_template_file": ["self"],
     "_browse_output_dir": ["self"],
+    "_toggle_target_sheet_dropdown": ["self"],
+    "_show_target_sheet_dropdown": ["self", "show_all"],
+    "_hide_target_sheet_dropdown": ["self"],
+    "_on_target_sheet_input_changed": ["self"],
+    "_refresh_target_sheet_matches": ["self", "show_all"],
+    "_get_target_sheet_matches": ["self", "query", "show_all"],
+    "_normalize_target_sheet_text": ["self", "value"],
+    "_select_target_sheet_option": ["self", "sheet_name"],
     "_load_settings": ["self"],
     "_save_settings": ["self"],
 }
@@ -128,6 +158,10 @@ def build_app_stub(settings_path: Path) -> TemplateAutomationApp:
     app.target_sheet_var = FakeVariable(app.TEMPLATE_SHEET_OPTIONS[0])
     app.output_dir_var = FakeVariable("")
     app.show_browser_var = FakeVariable(True)
+    app.target_sheet_dropdown_visible = False
+    app.target_sheet_result_widgets = []
+    app.target_sheet_dropdown = FakeWidget()
+    app.target_sheet_results_frame = FakeWidget()
     return app
 
 
@@ -213,11 +247,79 @@ def check_browse_callbacks() -> None:
         assert len(save_calls) == 3
 
 
+def check_target_sheet_matching() -> None:
+    app = build_app_stub(Path("unused.json"))
+
+    assert app._normalize_target_sheet_text(" cp_accessory-03 ") == "CP_ACCESSORY-03"
+    assert app._get_target_sheet_matches("") == app.TEMPLATE_SHEET_OPTIONS
+    assert app._get_target_sheet_matches("03") == ["CP_ACCESSORY-03"]
+    assert app._get_target_sheet_matches("accessory") == app.TEMPLATE_SHEET_OPTIONS
+    assert app._get_target_sheet_matches("missing") == []
+
+    all_matches = app._get_target_sheet_matches("missing", show_all=True)
+    assert all_matches == app.TEMPLATE_SHEET_OPTIONS
+    assert all_matches is not app.TEMPLATE_SHEET_OPTIONS
+
+
+def check_target_sheet_dropdown() -> None:
+    app = build_app_stub(Path("unused.json"))
+    previous_widget = FakeWidget()
+    app.target_sheet_result_widgets = [previous_widget]
+    app.target_sheet_var.set("03")
+
+    with patch("src.ui.app.ctk.CTkButton", side_effect=FakeWidget):
+        app._show_target_sheet_dropdown(show_all=False)
+
+    assert previous_widget.destroyed is True
+    assert app.target_sheet_dropdown_visible is True
+    assert app.target_sheet_dropdown.grid_calls == [
+        {
+            "row": 5,
+            "column": 1,
+            "sticky": "w",
+            "padx": (14, 24),
+            "pady": (0, 8),
+        }
+    ]
+    assert app.target_sheet_results_frame.configure_calls[-1] == {
+        "height": app.TARGET_SHEET_OPTION_HEIGHT + 12
+    }
+    assert len(app.target_sheet_result_widgets) == 1
+    assert app.target_sheet_result_widgets[0].kwargs["text"] == "CP_ACCESSORY-03"
+
+    app._toggle_target_sheet_dropdown()
+    assert app.target_sheet_dropdown_visible is False
+    assert app.target_sheet_dropdown.grid_remove_calls == 1
+
+    app.target_sheet_var.set("missing")
+    with (
+        patch("src.ui.app.ctk.CTkLabel", side_effect=FakeWidget),
+        patch("src.ui.app.ctk.CTkFont", return_value="font"),
+    ):
+        app._on_target_sheet_input_changed()
+
+    assert app.target_sheet_dropdown_visible is True
+    assert app.target_sheet_results_frame.configure_calls[-1] == {
+        "height": app.TARGET_SHEET_NO_MATCH_HEIGHT + 10
+    }
+    assert len(app.target_sheet_result_widgets) == 1
+    assert app.target_sheet_result_widgets[0].kwargs["text"] == "No predefined match."
+
+    save_calls = []
+    app._save_settings = lambda: save_calls.append(True)
+    app._select_target_sheet_option("CP_ACCESSORY-07")
+    assert app.target_sheet_var.get() == "CP_ACCESSORY-07"
+    assert app.target_sheet_dropdown_visible is False
+    assert save_calls == [True]
+
+
 def main() -> None:
     check_playwright_path_boundary()
     check_shell_structure()
     check_settings_round_trip()
     check_browse_callbacks()
+    check_target_sheet_matching()
+    check_target_sheet_dropdown()
 
     for _ in range(1000):
         check_shell_structure()

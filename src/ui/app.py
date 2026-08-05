@@ -447,6 +447,110 @@ class TemplateAutomationApp(AppStyle, ctk.CTk):
             self.output_dir_var.set(path)
             self._save_settings()
 
+    def _toggle_target_sheet_dropdown(self) -> None:
+        if self.target_sheet_dropdown_visible:
+            self._hide_target_sheet_dropdown()
+        else:
+            self._show_target_sheet_dropdown(show_all=True)
+
+    def _show_target_sheet_dropdown(self, show_all: bool = False) -> None:
+        self._refresh_target_sheet_matches(show_all=show_all)
+
+        self.target_sheet_dropdown.grid(
+            row=5,
+            column=1,
+            sticky="w",
+            padx=(14, 24),
+            pady=(0, 8),
+        )
+        self.target_sheet_dropdown_visible = True
+
+    def _hide_target_sheet_dropdown(self) -> None:
+        if self.target_sheet_dropdown_visible:
+            self.target_sheet_dropdown.grid_remove()
+        self.target_sheet_dropdown_visible = False
+
+    def _on_target_sheet_input_changed(self) -> None:
+        if not self.target_sheet_dropdown_visible:
+            self._show_target_sheet_dropdown(show_all=False)
+            return
+
+        self._refresh_target_sheet_matches(show_all=False)
+
+    def _refresh_target_sheet_matches(self, show_all: bool = False) -> None:
+        for widget in self.target_sheet_result_widgets:
+            widget.destroy()
+
+        self.target_sheet_result_widgets = []
+
+        query = self.target_sheet_var.get().strip()
+        matches = self._get_target_sheet_matches(query=query, show_all=show_all)
+
+        if matches:
+            target_height = min(
+                self.TARGET_SHEET_DROPDOWN_HEIGHT,
+                max(
+                    self.TARGET_SHEET_NO_MATCH_HEIGHT,
+                    len(matches) * (self.TARGET_SHEET_OPTION_HEIGHT + 4) + 8,
+                ),
+            )
+            self.target_sheet_results_frame.configure(height=target_height)
+
+            for row_index, sheet_name in enumerate(matches):
+                option_button = ctk.CTkButton(
+                    self.target_sheet_results_frame,
+                    text=sheet_name,
+                    height=self.TARGET_SHEET_OPTION_HEIGHT,
+                    fg_color="transparent",
+                    hover_color=self.COLOR_SECONDARY,
+                    text_color=self.COLOR_TEXT,
+                    corner_radius=4,
+                    anchor="w",
+                    command=lambda value=sheet_name: self._select_target_sheet_option(value),
+                )
+                option_button.grid(row=row_index, column=0, sticky="ew", padx=4, pady=2)
+                self.target_sheet_result_widgets.append(option_button)
+
+            return
+
+        self.target_sheet_results_frame.configure(height=self.TARGET_SHEET_NO_MATCH_HEIGHT + 10)
+        no_match_label = ctk.CTkLabel(
+            self.target_sheet_results_frame,
+            text="No predefined match.",
+            height=self.TARGET_SHEET_NO_MATCH_HEIGHT,
+            anchor="w",
+            justify="left",
+            text_color=self.COLOR_MUTED,
+            font=ctk.CTkFont(size=13),
+        )
+        no_match_label.grid(row=0, column=0, sticky="ew", padx=8, pady=4)
+        self.target_sheet_result_widgets.append(no_match_label)
+
+    def _get_target_sheet_matches(self, query: str, show_all: bool = False) -> list[str]:
+        if show_all:
+            return self.TEMPLATE_SHEET_OPTIONS.copy()
+
+        normalized_query = self._normalize_target_sheet_text(query)
+
+        if not normalized_query:
+            return self.TEMPLATE_SHEET_OPTIONS.copy()
+
+        matches = []
+        for option in self.TEMPLATE_SHEET_OPTIONS:
+            normalized_option = self._normalize_target_sheet_text(option)
+            if normalized_query in normalized_option:
+                matches.append(option)
+
+        return matches
+
+    def _normalize_target_sheet_text(self, value: str) -> str:
+        return str(value or "").strip().upper().replace(" ", "")
+
+    def _select_target_sheet_option(self, sheet_name: str) -> None:
+        self.target_sheet_var.set(sheet_name)
+        self._hide_target_sheet_dropdown()
+        self._save_settings()
+
     def _load_settings(self) -> None:
         if not self.SETTINGS_PATH.exists():
             return
