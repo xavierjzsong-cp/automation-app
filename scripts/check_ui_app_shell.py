@@ -85,6 +85,7 @@ EXPECTED_METHOD_PARAMETERS = {
     "_get_target_sheet_matches": ["self", "query", "show_all"],
     "_normalize_target_sheet_text": ["self", "value"],
     "_select_target_sheet_option": ["self", "sheet_name"],
+    "_build_generation_request": ["self"],
     "_load_settings": ["self"],
     "_save_settings": ["self"],
 }
@@ -313,6 +314,68 @@ def check_target_sheet_dropdown() -> None:
     assert save_calls == [True]
 
 
+def check_generation_request() -> None:
+    with TemporaryDirectory() as tmp_name:
+        root = Path(tmp_name)
+        input_path = root / "input.pdf"
+        template_path = root / "template.xlsx"
+        output_dir = root / "output"
+        input_path.touch()
+        template_path.touch()
+        output_dir.mkdir()
+
+        app = build_app_stub(root / "ui_settings.json")
+        app.user_name_var.set("  Test User  ")
+        app.input_pdf_var.set(f"  {input_path}  ")
+        app.template_file_var.set(f"  {template_path}  ")
+        app.target_sheet_var.set("  CP_ACCESSORY-09  ")
+        app.output_dir_var.set(f"  {output_dir}  ")
+        app.show_browser_var.set(False)
+
+        request = app._build_generation_request()
+        assert request.input_path == input_path
+        assert request.template_path == template_path
+        assert request.output_dir == output_dir
+        assert request.user_name == "Test User"
+        assert request.show_browser is False
+        assert request.run_partner_adapters is True
+        assert request.target_sheet_name == "CP_ACCESSORY-09"
+
+        required_fields = [
+            ("user_name_var", "User Name is required."),
+            ("input_pdf_var", "Input POTS PDF is required."),
+            ("template_file_var", "Template Excel file is required."),
+            ("target_sheet_var", "Target Sheet is required."),
+            ("output_dir_var", "Output folder is required."),
+        ]
+        for variable_name, expected_message in required_fields:
+            invalid_app = build_app_stub(root / "unused.json")
+            invalid_app.user_name_var.set("Test User")
+            invalid_app.input_pdf_var.set(str(input_path))
+            invalid_app.template_file_var.set(str(template_path))
+            invalid_app.target_sheet_var.set("CP_ACCESSORY-01")
+            invalid_app.output_dir_var.set(str(output_dir))
+            getattr(invalid_app, variable_name).set("   ")
+
+            try:
+                invalid_app._build_generation_request()
+            except ValueError as exc:
+                assert str(exc) == expected_message
+            else:
+                raise AssertionError(f"Expected ValueError for {variable_name}")
+
+        deferred_path_app = build_app_stub(root / "unused.json")
+        deferred_path_app.user_name_var.set("Test User")
+        deferred_path_app.input_pdf_var.set(str(root / "missing.pdf"))
+        deferred_path_app.template_file_var.set(str(root / "missing.xlsx"))
+        deferred_path_app.target_sheet_var.set("CP_ACCESSORY-01")
+        deferred_path_app.output_dir_var.set(str(root / "missing-output"))
+        deferred_request = deferred_path_app._build_generation_request()
+        assert deferred_request.input_path == root / "missing.pdf"
+        assert deferred_request.template_path == root / "missing.xlsx"
+        assert deferred_request.output_dir == root / "missing-output"
+
+
 def main() -> None:
     check_playwright_path_boundary()
     check_shell_structure()
@@ -320,6 +383,7 @@ def main() -> None:
     check_browse_callbacks()
     check_target_sheet_matching()
     check_target_sheet_dropdown()
+    check_generation_request()
 
     for _ in range(1000):
         check_shell_structure()
