@@ -46,6 +46,8 @@ class FakeWidget:
         self.configure_calls = []
         self.grid_calls = []
         self.grid_remove_calls = 0
+        self.set_calls = []
+        self.update_idletasks_calls = 0
         self.destroyed = False
 
     def configure(self, **kwargs) -> None:
@@ -56,6 +58,12 @@ class FakeWidget:
 
     def grid_remove(self) -> None:
         self.grid_remove_calls += 1
+
+    def set(self, value) -> None:
+        self.set_calls.append(value)
+
+    def update_idletasks(self) -> None:
+        self.update_idletasks_calls += 1
 
     def destroy(self) -> None:
         self.destroyed = True
@@ -86,6 +94,12 @@ EXPECTED_METHOD_PARAMETERS = {
     "_normalize_target_sheet_text": ["self", "value"],
     "_select_target_sheet_option": ["self", "sheet_name"],
     "_build_generation_request": ["self"],
+    "_show_progress_area": ["self"],
+    "_threadsafe_status": ["self", "message"],
+    "_handle_service_status": ["self", "message"],
+    "_map_status_to_progress": ["self", "message"],
+    "_set_progress": ["self", "percent", "message"],
+    "_get_current_progress_percent": ["self"],
     "_load_settings": ["self"],
     "_save_settings": ["self"],
 }
@@ -163,6 +177,11 @@ def build_app_stub(settings_path: Path) -> TemplateAutomationApp:
     app.target_sheet_result_widgets = []
     app.target_sheet_dropdown = FakeWidget()
     app.target_sheet_results_frame = FakeWidget()
+    app.progress_var = FakeVariable(0)
+    app.progress_percent_var = FakeVariable("0%")
+    app.progress_card = FakeWidget()
+    app.progress_bar = FakeWidget()
+    app.status_message_label = FakeWidget()
     return app
 
 
@@ -376,6 +395,72 @@ def check_generation_request() -> None:
         assert deferred_request.output_dir == root / "missing-output"
 
 
+def check_progress_reporting() -> None:
+    app = build_app_stub(Path("unused.json"))
+
+    expected_statuses = {
+        "Checking input information...": (10, "Checking input information..."),
+        "Reading input document...": (22, "Reading input document..."),
+        "Identifying connection details...": (35, "Identifying connection details..."),
+        "Retrieving upper connection...": (52, "Retrieving top thread data..."),
+        "Retrieving lower connection...": (72, "Retrieving bottom thread data..."),
+        "Filling Excel template...": (88, "Filling Excel template..."),
+        "Saving output file...": (95, "Saving output file..."),
+    }
+    for message, expected in expected_statuses.items():
+        assert app._map_status_to_progress(message) == expected
+
+    app.progress_var.set(40)
+    assert app._map_status_to_progress("Unmapped status") == (42, "Processing...")
+    app.progress_var.set(95)
+    assert app._map_status_to_progress("") == (95, "Processing...")
+    app.progress_var.set("invalid")
+    assert app._get_current_progress_percent() == 0
+    assert app._map_status_to_progress(None) == (5, "Processing...")
+
+    app._set_progress(-10, "Starting")
+    assert app.progress_var.get() == 0
+    assert app.progress_percent_var.get() == "0%"
+    assert app.progress_bar.set_calls[-1] == 0
+    assert app.status_message_label.configure_calls[-2:] == [
+        {"text": "Starting"},
+        {"text_color": app.COLOR_MUTED},
+    ]
+
+    app._set_progress(120, "Complete")
+    assert app.progress_var.get() == 100
+    assert app.progress_percent_var.get() == "100%"
+    assert app.progress_bar.set_calls[-1] == 1
+    assert app.status_message_label.configure_calls[-1] == {"text": "Complete"}
+
+    app._show_progress_area()
+    assert app.progress_card.grid_calls == [
+        {
+            "row": 9,
+            "column": 0,
+            "columnspan": 3,
+            "sticky": "ew",
+            "padx": 24,
+            "pady": (0, 24),
+        }
+    ]
+    assert app.progress_card.update_idletasks_calls == 1
+
+    scheduled_callbacks = []
+    app.after = lambda delay, callback: scheduled_callbacks.append((delay, callback))
+    app._threadsafe_status("Writing template")
+    assert len(scheduled_callbacks) == 1
+    delay, callback = scheduled_callbacks[0]
+    assert delay == 0
+    callback()
+    assert app.progress_var.get() == 88
+    assert app.progress_percent_var.get() == "88%"
+    assert app.status_message_label.configure_calls[-2:] == [
+        {"text": "Filling Excel template..."},
+        {"text_color": app.COLOR_MUTED},
+    ]
+
+
 def main() -> None:
     check_playwright_path_boundary()
     check_shell_structure()
@@ -384,6 +469,7 @@ def main() -> None:
     check_target_sheet_matching()
     check_target_sheet_dropdown()
     check_generation_request()
+    check_progress_reporting()
 
     for _ in range(1000):
         check_shell_structure()

@@ -587,6 +587,94 @@ class TemplateAutomationApp(AppStyle, ctk.CTk):
             target_sheet_name=target_sheet_name,
         )
 
+    def _show_progress_area(self) -> None:
+        self.progress_card.grid(
+            row=9,
+            column=0,
+            columnspan=3,
+            sticky="ew",
+            padx=24,
+            pady=(0, 24),
+        )
+        self.progress_card.update_idletasks()
+
+    def _threadsafe_status(self, message: str) -> None:
+        self.after(0, lambda: self._handle_service_status(message))
+
+    def _handle_service_status(self, message: str) -> None:
+        progress, short_message = self._map_status_to_progress(message)
+        self._set_progress(progress, short_message)
+
+    def _map_status_to_progress(self, message: str) -> tuple[int, str]:
+        text = str(message or "").strip()
+        normalized = text.lower()
+
+        status_steps = [
+            (
+                10,
+                ["validating", "validate", "checking input"],
+                "Checking input information...",
+            ),
+            (
+                22,
+                ["parsing", "parsed", "reading input document", "document"],
+                "Reading input document...",
+            ),
+            (
+                35,
+                ["routing", "route", "identifying connection", "connection details"],
+                "Identifying connection details...",
+            ),
+            (
+                52,
+                ["top thread", "upper"],
+                "Retrieving top thread data...",
+            ),
+            (
+                72,
+                ["bottom thread", "lower"],
+                "Retrieving bottom thread data...",
+            ),
+            (
+                88,
+                ["writing", "template", "excel", "filling"],
+                "Filling Excel template...",
+            ),
+            (
+                95,
+                ["saved", "saving", "output"],
+                "Saving output file...",
+            ),
+        ]
+
+        for progress, keywords, display_text in status_steps:
+            for keyword in keywords:
+                if keyword in normalized:
+                    return progress, display_text
+
+        current_progress = self._get_current_progress_percent()
+        fallback_progress = min(max(current_progress + 2, 5), 95)
+
+        return fallback_progress, "Processing..."
+
+    def _set_progress(self, percent: int | float, message: str) -> None:
+        percent = int(max(0, min(100, percent)))
+
+        self.progress_var.set(percent)
+        self.progress_percent_var.set(f"{percent}%")
+
+        self.progress_bar.set(percent / 100)
+        self.status_message_label.configure(text=message)
+
+        if percent < 100:
+            self.status_message_label.configure(text_color=self.COLOR_MUTED)
+
+    def _get_current_progress_percent(self) -> int:
+        try:
+            return int(self.progress_var.get())
+        except Exception:
+            return 0
+
     def _load_settings(self) -> None:
         if not self.SETTINGS_PATH.exists():
             return
